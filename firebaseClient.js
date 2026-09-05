@@ -481,13 +481,21 @@
   }
 
   async function callServerFunction(name, payload = {}) {
+    const requestedUid = client.user?.uid;
+    const requestedRealm = [RESET_GENERATION, ONLINE_WORLD_ID, REALM_SHARD_ID].join(":");
     await init();
     const uid = requireSignedIn();
     if (!uid) throw new Error("Sign in to use server multiplayer.");
+    if (requestedUid && (requestedUid !== uid || requestedRealm !== [RESET_GENERATION, ONLINE_WORLD_ID, REALM_SHARD_ID].join(":"))) {
+      const error = new Error("The game session changed before this request could be sent.");
+      error.code = "functions/cancelled";
+      throw error;
+    }
     if (!client.functions || !client.modules?.functions?.httpsCallable) {
       throw new Error("Firebase Functions did not load.");
     }
     const callable = client.modules.functions.httpsCallable(client.functions, name);
+    const requestRealm = [RESET_GENERATION, ONLINE_WORLD_ID, REALM_SHARD_ID].join(":");
     const startedAt = performance.now();
     let succeeded = false;
     try {
@@ -498,6 +506,11 @@
         clientWorldId: ONLINE_WORLD_ID,
         clientRealmShardId: REALM_SHARD_ID,
       }) || {});
+      if (client.user?.uid !== uid || requestRealm !== [RESET_GENERATION, ONLINE_WORLD_ID, REALM_SHARD_ID].join(":")) {
+        const error = new Error("This response belongs to an earlier game session.");
+        error.code = "functions/cancelled";
+        throw error;
+      }
       const receivedAt = performance.now();
       const serverTime = Number(result?.data?.serverTimeMs || result?.data?.serverNowMs);
       // Realm information is freshly sampled; replayed action receipts are not clocks.
@@ -624,8 +637,173 @@
     return result;
   }
 
+  const armySubmissionPromises = new Map();
+  let pendingArmyRecoveryInFlight = false;
+  function getOnlineRequestScope() {
+    return [client.user?.uid || "", ONLINE_WORLD_ID, RESET_GENERATION, REALM_SHARD_ID].join(":");
+  }
+
+  function withArmyConfirmationTimeout(promise, timeoutMs, message) {
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+      timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+      if (timer) window.clearTimeout(timer);
+    });
+  }
+
+  function isRetryableArmySubmissionError(error) {
+    const code = String(error?.code || error?.name || "").toLowerCase();
+    const message = String(error?.message || error || "").toLowerCase();
+    return /unavailable|deadline-exceeded|internal|unknown|network|timeout/.test(`${code} ${message}`);
+  }
+
+  function readPendingOnlineArmyMovements() {
+    try {
+      const raw = localStorage.getItem(`crownlands-army-confirmations:${getOnlineRequestScope()}`);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter(entry => entry?.movement?.id) : [];
+    } catch (error) {
+      console.warn("Could not read pending army queue", error);
+      return [];
+    }
+  }
+
+  function writePendingOnlineArmyMovements(entries) {
+    try {
+      const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000;
+      const cleaned = (Array.isArray(entries) ? entries : [])
+        .filter(entry => entry?.movement?.id && (entry.submissionVersion === 1 || Math.max(0, Number(entry.updatedAtMs) || 0) >= cutoff))
+        .slice(-40);
+      if (cleaned.length) localStorage.setItem(`crownlands-army-confirmations:${getOnlineRequestScope()}`, JSON.stringify(cleaned));
+      else localStorage.removeItem(`crownlands-army-confirmations:${getOnlineRequestScope()}`);
+      return true;
+    } catch (error) {
+      console.warn("Could not save pending army queue", error);
+      return false;
+    }
+  }
+
+  function forgetPendingOnlineArmyMovement(onlineId) {
+    const uid = client.user?.uid || "";
+    if (!uid || !onlineId) return;
+    const key = `${uid}:${onlineId}`;
+    writePendingOnlineArmyMovements(readPendingOnlineArmyMovements().filter(entry => entry.key !== key));
+  }
+
+  function submitRecoverableArmyOrder(payload) {
+    const scope = getOnlineRequestScope();
+    const uid = client.user?.uid || "";
+    const api = { sendArmyOrder, loadArmyOrder };
+    if (!uid || !api?.sendArmyOrder) return Promise.reject(new Error("Sign in before sending an order."));
+    const army = payload.army || {};
+    const requestKey = [army.kind, army.fromId || "", payload.sourceRegionId || army.sourceRegionId || "",
+      payload.targetType || army.targetType || "city", payload.targetRegionId || army.targetRegionId, army.toId].join(":");
+    const signature = JSON.stringify([army.troops, army.requestedTroops, Boolean(army.useSwiftMarchOrder), army.protectionHandling || "", army.acceptedAttackProtection || null]);
+    const entries = readPendingOnlineArmyMovements();
+    let entry = entries.find(item => item.submissionVersion === 1 && item.scope === scope && item.requestKey === requestKey);
+    if (entry && entry.signature !== signature) return Promise.reject(new Error("An earlier order to this target is awaiting confirmation. Retry its original selection after reconnecting."));
+    if (!entry) {
+      if (entries.filter(item => item.submissionVersion === 1).length >= 40) {
+        return Promise.reject(new Error("Reconnect to confirm your pending orders before sending more."));
+      }
+      const id = payload.armyId || army.id;
+      entry = { submissionVersion: 1, scope, uid, requestKey, signature, key: `${uid}:${id}`,
+        movement: { id }, payload: JSON.parse(JSON.stringify(payload)), updatedAtMs: Date.now() };
+      if (!writePendingOnlineArmyMovements([...entries, entry])) {
+        return Promise.reject(new Error("Order confirmation could not be saved. Check browser storage and try again."));
+      }
+    }
+    const promiseKey = `${scope}:${entry.movement.id}`;
+    if (armySubmissionPromises.has(promiseKey)) return armySubmissionPromises.get(promiseKey);
+    const isCurrent = () => scope === getOnlineRequestScope();
+    const send = () => {
+      if (!isCurrent()) { const error = new Error("This order belongs to an earlier session."); error.code = "functions/cancelled"; throw error; }
+      return api.sendArmyOrder(entry.payload);
+    };
+    const task = Promise.resolve().then(send).catch(async error => {
+      if (!isCurrent() || !isRetryableArmySubmissionError(error) || navigator.onLine === false) throw error;
+      await new Promise(resolve => window.setTimeout(resolve, 350));
+      return send();
+    }).then(result => {
+      if (result?.movement?.id !== entry.movement.id) {
+        const error = new Error("Order confirmation has not arrived yet."); error.code = "functions/unknown"; throw error;
+      }
+      if (isCurrent()) forgetPendingOnlineArmyMovement(entry.movement.id);
+      return result;
+    }).catch(async error => {
+      if (isCurrent() && String(error?.code || "").includes("already-exists") && api.loadArmyOrder) {
+        const accepted = await withArmyConfirmationTimeout(api.loadArmyOrder(entry.movement.id), 5000, "Order confirmation is taking too long.").catch(() => {
+          const pendingError = new Error("Order confirmation is still pending.");
+          pendingError.code = "functions/unknown";
+          throw pendingError;
+        });
+        if (accepted && isCurrent()) {
+          forgetPendingOnlineArmyMovement(entry.movement.id);
+          return { ok: true, duplicate: true, movement: accepted, alreadyResolved: accepted.status !== "active" };
+        }
+      }
+      if (isCurrent() && !isRetryableArmySubmissionError(error) && !String(error?.code || "").includes("already-exists")) {
+        forgetPendingOnlineArmyMovement(entry.movement.id);
+      }
+      throw error;
+    }).finally(() => armySubmissionPromises.delete(promiseKey));
+    armySubmissionPromises.set(promiseKey, task);
+    return task;
+  }
+
+  async function recoverPendingOnlineArmyMovements(onAccepted = () => {}) {
+    if (navigator.onLine === false) return false;
+    const uid = client.user?.uid || "";
+    const scope = getOnlineRequestScope();
+    const api = { sendArmyOrder, loadArmyOrder };
+    if (!uid || !api?.loadArmyOrder || pendingArmyRecoveryInFlight === scope) return false;
+    const pending = readPendingOnlineArmyMovements().filter(entry => entry.submissionVersion === 1 && entry.scope === scope);
+    if (!pending.length) return true;
+    pendingArmyRecoveryInFlight = scope;
+    let recovered = false;
+    let index = 0;
+    const worker = async () => {
+      while (index < pending.length && scope === getOnlineRequestScope()) {
+        const entry = pending[index++];
+        try {
+          const army = await withArmyConfirmationTimeout(api.loadArmyOrder(entry.movement.id), 5000, "Order confirmation is taking too long.");
+          if (!army || scope !== getOnlineRequestScope()) continue;
+          // Reconnect only reads accepted orders. It never launches an unsent order.
+          forgetPendingOnlineArmyMovement(entry.movement.id);
+          recovered = true;
+          onAccepted(army);
+        } catch (error) {
+          if (scope === getOnlineRequestScope()) console.warn("Order confirmation will retry after reconnecting", error?.code || "unavailable");
+        }
+      }
+    };
+    try {
+      await Promise.all([worker(), worker()]);
+      return recovered;
+    } finally {
+      if (pendingArmyRecoveryInFlight === scope) pendingArmyRecoveryInFlight = false;
+    }
+  }
+
   async function previewArmyRoute(payload = {}) {
     return callServerFunction("previewArmyRoute", payload);
+  }
+
+  async function loadArmyOrder(armyId) {
+    await init();
+    const uid = requireSignedIn();
+    const scope = [RESET_GENERATION, ONLINE_WORLD_ID, REALM_SHARD_ID].join(":");
+    if (!uid || !/^[a-zA-Z0-9_-]{1,160}$/.test(String(armyId || ""))) return null;
+    const { doc, getDocFromServer } = client.modules.firestore;
+    const snap = await getDocFromServer(doc(client.db, "armies", armyId));
+    if (client.user?.uid !== uid || scope !== [RESET_GENERATION, ONLINE_WORLD_ID, REALM_SHARD_ID].join(":")) return null;
+    if (!snap.exists()) return null;
+    const army = snap.data();
+    if (army.ownerUid !== uid || army.worldId !== ONLINE_WORLD_ID || army.resetGeneration !== RESET_GENERATION
+      || String(army.realmShardId || "legacy") !== REALM_SHARD_ID) return null;
+    return { ...army, id: snap.id };
   }
 
   async function sendNearbyScouts(payload = {}) {
@@ -3053,6 +3231,10 @@
     loadStrongholdLegacyLeaderboard,
     subscribePlayerGlobalStats,
     sendArmyOrder,
+    loadArmyOrder,
+    submitRecoverableArmyOrder,
+    isRetryableArmySubmissionError,
+    recoverPendingOnlineArmyMovements,
     previewArmyRoute,
     sendNearbyScouts,
     sendRegroupOrders,

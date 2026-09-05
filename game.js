@@ -1,4 +1,4 @@
-﻿const WORLD_CONFIG = window.CROWNLANDS_WORLD_CONFIG || {};
+const WORLD_CONFIG = window.CROWNLANDS_WORLD_CONFIG || {};
 const REALM_CONFIG = window.CROWNLANDS_REALM_CONFIG || {};
 const MAP_EDITOR_DATA = window.CROWNLANDS_MAP_EDITOR_DATA || {};
 const CORE_EXPANSION_SERVER_ACTIVATION_KEY = "crownlands.core-expansion.server-activated.v1";
@@ -87,7 +87,6 @@ const MIN_NEW_PLAYER_SPAWN_NEUTRAL_CITIES = CORE_EXPANSION_TOPOLOGY_ACTIVE
 let RESET_GENERATION = String(REALM_CONFIG.resetGeneration || "fresh-2026-07-26-server-reset");
 let REALM_SHARD_ID = "legacy";
 let STORAGE_KEY = `crownlands-realtime-${RESET_GENERATION}`;
-let PENDING_ARMY_STORAGE_KEY = `crownlands-pending-armies-${RESET_GENERATION}`;
 const PUSH_NOTIFICATIONS_PREF_KEY = "crownlands-push-notifications";
 const ANIMATION_MODE_STORAGE_KEY = "crownlands.animation.mode.v1";
 const LEGACY_ANIMATION_MODE_STORAGE_KEY = "crownlands-animation-mode";
@@ -129,7 +128,6 @@ const ONLINE_ARMY_RESOLVE_RETRY_SECONDS = 5;
 const FOREGROUND_LONG_RESUME_MS = 60 * 1000;
 const FOREGROUND_RESUME_COALESCE_MS = 150;
 const FOREGROUND_RESUME_RETRY_DELAYS_MS = Object.freeze([2000, 8000]);
-const PENDING_ARMY_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
 const UPDATE_CHECK_INTERVAL_SECONDS = 60;
 const UPDATE_RELOAD_SAVE_TIMEOUT_MS = 3000;
 const UPDATE_RELOAD_PAUSE_MS = 650;
@@ -1946,6 +1944,7 @@ let activeSwiftMarchOrderSelected = false;
 let activeTroopRouteRequestId = 0;
 let authoritativeRoutePreviewTimer = 0;
 let authoritativeRoutePreviewRequestId = 0;
+let authoritativeRoutePreviewPendingKey = "";
 let scoutNearbySourceId = null;
 let regroupSourceId = null;
 let bulkOrderActionRequestId = 0;
@@ -2145,7 +2144,6 @@ let kingPowerRenderFrameCacheActive = false;
 let kingPowerRenderFrameCache = null;
 let currentPlayerIdentityKingPowerOverride = null;
 let overdueArmyResolveTimer = 0;
-let pendingArmyRecoveryInFlight = false;
 let dailyLoginRewardStatus = null;
 let dailyLoginRewardStatusLoading = false;
 let dailyLoginRewardStatusPromise = null;
@@ -3007,7 +3005,6 @@ function applyVerifiedRealmIdentity(raw = {}) {
     ? RESET_GENERATION
     : `${RESET_GENERATION}-${REALM_SHARD_ID}`;
   STORAGE_KEY = `crownlands-realtime-${storageScope}`;
-  PENDING_ARMY_STORAGE_KEY = `crownlands-pending-armies-${storageScope}`;
   REWARDED_AD_PENDING_STORAGE_KEY = `crownlands-pending-rewarded-ad-${storageScope}`;
   DAILY_LOGIN_REWARD_AUTO_OPEN_PREFIX = `crownlands-daily-reward-opened-${storageScope}`;
   ONLINE_SAVE_SLOT = `default-${RESET_GENERATION}`;
@@ -10264,6 +10261,7 @@ function scoutRewardCamp(campId) {
 }
 
 async function scoutTarget(target) {
+  const requestScope = getOnlineRequestScope();
   const campTarget = isRewardCampTarget(target);
   const scoutBlockReason = campTarget
     ? ""
@@ -10287,7 +10285,10 @@ async function scoutTarget(target) {
       try {
         await launchAutomaticServerScout(target);
       } catch (error) {
-        rejectGameAction(error?.message || "The scout could not be dispatched.");
+        if (requestScope !== getOnlineRequestScope()) return;
+        rejectGameAction(getOnlineApi().isRetryableArmySubmissionError(error)
+          ? "Scout confirmation pending. Reconnect and retry the same order."
+          : error?.message || "The scout could not be dispatched.");
       }
       return;
     }
@@ -10308,8 +10309,10 @@ async function scoutTarget(target) {
     renderAll();
     showToast(`Scout moving from ${source.name} to ${freshTarget.name}`);
   } finally {
-    pendingDirectScoutTargets.delete(target.id);
-    renderScoutRequestFeedback();
+    if (requestScope === getOnlineRequestScope()) {
+      pendingDirectScoutTargets.delete(target.id);
+      renderScoutRequestFeedback();
+    }
   }
 }
 
@@ -10321,10 +10324,11 @@ function renderScoutRequestFeedback() {
 async function launchAutomaticServerScout(target) {
   const api = getOnlineApi();
   if (!api?.sendArmyOrder || !target?.id) return false;
+  const requestScope = getOnlineRequestScope();
   const targetType = getHoldingTowerTargetType(target);
   const targetRegionId = getCityRegionId(target);
   const armyId = createOnlineArmyId("scout");
-  const result = await api.sendArmyOrder({
+  const result = await api.submitRecoverableArmyOrder({
     worldId: ONLINE_WORLD_ID,
     resetGeneration: RESET_GENERATION,
     armyId,
@@ -10341,7 +10345,13 @@ async function launchAutomaticServerScout(target) {
       requestedTroops: 1,
     },
   });
-  if (!result?.movement) return false;
+  if (requestScope !== getOnlineRequestScope() || !result?.movement) return false;
+  if (result.alreadyResolved) {
+    void loadServerReportsOnce();
+    void refreshServerEconomy(true);
+    showToast("Your earlier scout order is already complete. Check Reports.");
+    return true;
+  }
   applyServerArmyResult(result);
   adoptServerArmyMovement(result.movement);
   const sourceName = result.movement.fromName || "the nearest eligible holding";
@@ -13621,6 +13631,7 @@ async function refreshAllOwnedCities(force = false) {
   if (!force && onlineOwnedCitiesCacheComplete && now - onlineOwnedCitiesCacheAt < ONLINE_OWNED_CITIES_REFRESH_MS) return true;
 
   onlineOwnedCitiesRefreshInFlight = true;
+  const requestScope = getOnlineRequestScope();
   onlineOwnedCitiesRefreshError = "";
   try {
     const islandIds = getRegionIds().map(getOnlineIslandId);
@@ -13629,6 +13640,7 @@ async function refreshAllOwnedCities(force = false) {
       ONLINE_OWNED_CITIES_LOOKUP_TIMEOUT_MS,
       "Owned city lookup is taking too long."
     );
+    if (requestScope !== getOnlineRequestScope()) return false;
     const roster = validateCompleteOwnedCityRoster(Array.isArray(owned) ? owned : []);
     if (!roster.complete) {
       onlineOwnedCitiesCacheComplete = false;
@@ -13646,14 +13658,17 @@ async function refreshAllOwnedCities(force = false) {
     if (modal.open && modal.classList.contains("island-switcher-modal")) rerenderIslandSwitcherModalIfOpen();
     return true;
   } catch (error) {
+    if (requestScope !== getOnlineRequestScope()) return false;
     onlineOwnedCitiesCacheComplete = false;
     onlineLastError = error?.message || String(error);
     onlineOwnedCitiesRefreshError = onlineLastError;
     console.warn("Could not load owned cities across islands", error);
     return false;
   } finally {
-    onlineOwnedCitiesRefreshInFlight = false;
-    if (modal.open && modal.classList.contains("city-list-modal")) renderCityListModal();
+    if (requestScope === getOnlineRequestScope()) {
+      onlineOwnedCitiesRefreshInFlight = false;
+      if (modal.open && modal.classList.contains("city-list-modal")) renderCityListModal();
+    }
   }
 }
 
@@ -14649,7 +14664,7 @@ async function publishOnlinePresence(_force = false) {
   const requestGeneration = ++onlinePresenceRequestGeneration;
   onlinePresenceInFlight = true;
   try {
-    const saved = await api.savePresence(islandId, getOnlinePresenceSnapshot());
+    const saved = await withTimeout(api.savePresence(islandId, getOnlinePresenceSnapshot()), 5000, "Presence sync is taking too long.");
     if (requestGeneration !== onlinePresenceRequestGeneration) return Boolean(saved);
     rememberCurrentPlayerIdentity();
     onlineLastError = "";
@@ -15225,6 +15240,8 @@ function retireActiveOnlineIslandSubscription() {
 }
 
 function disconnectOnlineWorld() {
+  pendingDirectScoutTargets.clear();
+  cancelAuthoritativeRoutePreviewRefresh();
   cancelLoginPresentationSequence();
   disposeOnlineChat();
   stopDailyMissionLifecycle({ clear: true });
@@ -15272,7 +15289,6 @@ function disconnectOnlineWorld() {
   onlinePresenceInFlight = false;
   harvestRelocationRetryAtMs = 0;
   overdueArmyResolveTimer = 0;
-  pendingArmyRecoveryInFlight = false;
   onlineWorldConnected = false;
   onlineCitiesLoaded = false;
   onlineFreshClaimCityId = "";
@@ -15424,58 +15440,8 @@ function handleServiceWorkerUpdateMessage(event) {
   handleDeployedUpdate(buildId);
 }
 
-function readPendingOnlineArmyMovements() {
-  try {
-    const raw = localStorage.getItem(PENDING_ARMY_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter(entry => entry?.movement?.id) : [];
-  } catch (error) {
-    console.warn("Could not read pending army queue", error);
-    return [];
-  }
-}
-
-function writePendingOnlineArmyMovements(entries) {
-  try {
-    const cutoff = Date.now() - PENDING_ARMY_MAX_AGE_MS;
-    const cleaned = (Array.isArray(entries) ? entries : [])
-      .filter(entry => entry?.movement?.id && Math.max(0, Number(entry.updatedAtMs) || 0) >= cutoff)
-      .slice(-40);
-    if (cleaned.length) localStorage.setItem(PENDING_ARMY_STORAGE_KEY, JSON.stringify(cleaned));
-    else localStorage.removeItem(PENDING_ARMY_STORAGE_KEY);
-  } catch (error) {
-    console.warn("Could not save pending army queue", error);
-  }
-}
-
-function rememberPendingOnlineArmyMovement(movement, regionIds = []) {
-  const uid = getCurrentOnlineUid();
-  if (!uid || !movement?.id) return;
-  const entries = readPendingOnlineArmyMovements();
-  const key = `${uid}:${movement.id}`;
-  const nextEntry = {
-    key,
-    uid,
-    movement,
-    regionIds: [...new Set((regionIds.length ? regionIds : movement.routeRegionIds || []).map(normalizeRegionId).filter(Boolean))],
-    updatedAtMs: Date.now(),
-  };
-  const nextEntries = entries.filter(entry => entry.key !== key);
-  nextEntries.push(nextEntry);
-  writePendingOnlineArmyMovements(nextEntries);
-}
-
-function forgetPendingOnlineArmyMovement(onlineId) {
-  const uid = getCurrentOnlineUid();
-  if (!uid || !onlineId) return;
-  const key = `${uid}:${onlineId}`;
-  writePendingOnlineArmyMovements(readPendingOnlineArmyMovements().filter(entry => entry.key !== key));
-}
-
-async function saveOnlineArmyMovementToRegions(movement, regionIds = []) {
-  onlineLastError = "Direct army writes are disabled. Online military movement must go through the server.";
-  console.warn("Blocked direct army movement write", { movementId: movement?.id, regionIds });
-  return false;
+function getOnlineRequestScope() {
+  return [getCurrentOnlineUid(), ONLINE_WORLD_ID, RESET_GENERATION, REALM_SHARD_ID].join(":");
 }
 
 async function waitForPendingOnlineWrites(timeoutMs = 4500) {
@@ -15486,13 +15452,19 @@ async function waitForPendingOnlineWrites(timeoutMs = 4500) {
 }
 
 async function recoverPendingOnlineArmyMovements() {
-  if (pendingArmyRecoveryInFlight) return false;
-  if (!isOnlineWorldActive()) return false;
-  const uid = getCurrentOnlineUid();
-  if (!uid) return false;
-  writePendingOnlineArmyMovements(readPendingOnlineArmyMovements().filter(entry => entry.uid !== uid));
-  return false;
+  const api = getOnlineApi();
+  if (!isOnlineWorldActive() || !api?.recoverPendingOnlineArmyMovements) return false;
+  const scope = getOnlineRequestScope();
+  return api.recoverPendingOnlineArmyMovements(army => {
+    if (scope !== getOnlineRequestScope()) return;
+    if (army.status === "active") adoptServerArmyMovement(army);
+    pendingOutgoingMissions.delete(army.id);
+    void refreshServerEconomy(true);
+    void loadServerReportsOnce();
+    updateOutgoingAttackUi();
+  });
 }
+
 
 async function subscribeOnlineIslandWithInitialCities(api, islandId, handlers = {}, timeoutMs = ONLINE_INITIAL_CITY_LIST_TIMEOUT_MS, timeoutMessage = "City list is taking too long.") {
   let unsubscribe = null;
@@ -17347,7 +17319,6 @@ function rollbackServerArmyMission(mission, reason = "") {
     if (onlineId && getOnlineArmyResolutionId(attack) === onlineId) return false;
     return attack.id !== mission.id;
   });
-  forgetPendingOnlineArmyMovement(onlineId);
   onlineLastError = reason || "Server rejected the army order.";
   addLog(`Army order canceled by server${reason ? `: ${reason}` : "."}`);
   showToast(reason || "Server canceled that army order.");
@@ -17360,8 +17331,6 @@ function rejectServerArmyMission(mission, reason = "", options = {}) {
     rollbackServerArmyMission(mission, reason);
     return;
   }
-  const onlineId = getOnlineArmyResolutionId(mission);
-  if (onlineId) forgetPendingOnlineArmyMovement(onlineId);
   onlineLastError = reason || "Server rejected the army order.";
   addLog(`Army order rejected by server${reason ? `: ${reason}` : "."}`);
   showToast(reason || "Server rejected that army order.");
@@ -17563,15 +17532,11 @@ function restoreRejectedArmyOrderSelection(mission) {
   }, 0);
 }
 
-function isRetryableArmySubmissionError(error) {
-  const code = String(error?.code || error?.name || "").toLowerCase();
-  const message = String(error?.message || error || "").toLowerCase();
-  return /unavailable|deadline-exceeded|internal|unknown|network|timeout/.test(`${code} ${message}`);
-}
 
 function publishOnlineArmyMovement(mission, options = {}) {
   if (!isOnlineWorldActive() || mission?.owner !== "player") return Promise.resolve(false);
   const api = getOnlineApi();
+  const requestScope = getOnlineRequestScope();
   if (!usesServerArmyAuthority() || !api?.sendArmyOrder) {
     onlineLastError = "Online army orders require the Crownlands server.";
     showToast("Online army orders need the server connection. Try again after reconnecting.");
@@ -17616,15 +17581,17 @@ function publishOnlineArmyMovement(mission, options = {}) {
     targetRegionId,
     routeRegionIds: regionIds,
   };
-  const submitOrder = () => api.sendArmyOrder(orderPayload);
-  const savePromise = submitOrder()
-    .catch(error => {
-      if (!isRetryableArmySubmissionError(error)) throw error;
-      mission.serverRetrying = true;
-      updateOutgoingAttackUi();
-      return new Promise(resolve => window.setTimeout(resolve, 350)).then(submitOrder);
-    })
+  const savePromise = api.submitRecoverableArmyOrder(orderPayload)
     .then(result => {
+      if (requestScope !== getOnlineRequestScope()) return false;
+      if (result.alreadyResolved) {
+        mission.serverPending = false;
+        mission.serverRetrying = false;
+        void loadServerReportsOnce();
+        void refreshServerEconomy(true);
+        showToast("Your earlier order is already complete. Check Reports.");
+        return false;
+      }
       recordMarchInteractionTiming("server-order-accepted", mission.clientSubmitStartedAt);
       if (result?.movement) applyServerMovementToMission(mission, result.movement);
       mission.peaceShieldDeactivated = Boolean(result?.peaceShieldDeactivated);
@@ -17646,10 +17613,18 @@ function publishOnlineArmyMovement(mission, options = {}) {
       return true;
     })
     .catch(error => {
-      recordMarchInteractionTiming("server-order-rejected", mission.clientSubmitStartedAt);
+      if (requestScope !== getOnlineRequestScope()) return false;
       pendingOutgoingMissions.delete(movement.id);
       mission.serverPending = false;
       mission.serverRetrying = false;
+      if (api.isRetryableArmySubmissionError(error) || String(error?.code || "").includes("already-exists")) {
+        onlineLastError = "Order confirmation pending. Reconnect and retry the same order.";
+        showToast(onlineLastError);
+        void recoverPendingOnlineArmyMovements();
+        restoreRejectedArmyOrderSelection(mission);
+        return false;
+      }
+      recordMarchInteractionTiming("server-order-rejected", mission.clientSubmitStartedAt);
       const rememberedVeilBlocks = mission.kind === "scout"
         ? rememberScoutVeilBlocksFromError(error, target)
         : 0;
@@ -17672,16 +17647,13 @@ function publishOnlineArmyMovement(mission, options = {}) {
     .finally(() => {
       pendingOutgoingMissions.delete(movement.id);
       onlineArmySavePromises.delete(savePromise);
-      updateOutgoingAttackUi();
+      if (requestScope === getOnlineRequestScope()) updateOutgoingAttackUi();
     });
   onlineArmySavePromises.add(savePromise);
   return savePromise;
 }
 
-function deleteOnlineArmyMovement(mission) {
-  if (!mission?.onlineId || mission.owner !== "player") return;
-  forgetPendingOnlineArmyMovement(mission.onlineId);
-}
+
 
 function getOnlineArmyResolutionId(mission) {
   const id = mission?.onlineId || (typeof mission?.id === "string" ? mission.id : "");
@@ -17933,7 +17905,6 @@ function purgeResolvedOnlineArmy(onlineId, { removeLocal = true } = {}) {
     }
   }
   if (pendingOutgoingMissions.delete(id)) changed = true;
-  forgetPendingOnlineArmyMovement(id);
   if (changed) rebuildOnlineArmies();
   return changed;
 }
@@ -18364,10 +18335,14 @@ function clearOnlineCrownCitadelWatcher({ clear = true } = {}) {
 async function loadServerReportsOnce() {
   const api = getOnlineApi();
   if (!state || !api?.loadServerReports || !api?.isSignedIn?.()) return false;
+  const requestScope = getOnlineRequestScope();
   try {
     const reports = await withTimeout(api.loadServerReports(120), 5000, "Server reports are taking too long.");
-    return mergeServerReports(reports, { notify: audioServerReportsHydrated });
+    if (requestScope !== getOnlineRequestScope()) return false;
+    mergeServerReports(reports, { notify: audioServerReportsHydrated });
+    return true;
   } catch (error) {
+    if (requestScope !== getOnlineRequestScope()) return false;
     onlineLastError = error?.message || String(error);
     console.warn("Could not load server reports", error);
     return false;
@@ -18816,13 +18791,14 @@ async function loadOnlineRegionCitiesForResolution(regionId) {
   const api = getOnlineApi();
   if (!state || !api?.loadIslandCities || !api?.isSignedIn?.()) return false;
   const targetRegionId = normalizeRegionId(regionId);
+  const requestScope = getOnlineRequestScope();
 
   const onlineCities = await withTimeout(
     api.loadIslandCities(getOnlineIslandId(targetRegionId)),
     ONLINE_REGION_CITY_RESOLUTION_TIMEOUT_MS,
     `${getRegionLabel(targetRegionId)} city list is taking too long.`
   );
-  if (!Array.isArray(onlineCities)) return false;
+  if (requestScope !== getOnlineRequestScope() || !Array.isArray(onlineCities)) return false;
   applyOnlineCities(onlineCities, targetRegionId, { activateRegion: false });
   return true;
 }
@@ -21672,10 +21648,9 @@ async function synchronizeForegroundGame(awayMs = 0, { longRefresh = false } = {
 
   const targetRegionId = getActiveOnlineRegionId();
   const shouldRestartRealtime = longRefresh || onlineRealtimeRecoveryNeeded;
-  const resumeUid = getCurrentOnlineUid();
-  const resumeWorld = ONLINE_WORLD_ID;
-  const isCurrentResume = () => resumeUid === getCurrentOnlineUid()
-    && resumeWorld === ONLINE_WORLD_ID && targetRegionId === getActiveOnlineRegionId();
+  const resumeScope = getOnlineRequestScope();
+  const isCurrentResume = () => resumeScope === getOnlineRequestScope()
+    && targetRegionId === getActiveOnlineRegionId();
   const shouldShowWelcomeBack = awayMs >= FOREGROUND_LONG_RESUME_MS;
   const shouldRequestWelcomeBack = Boolean(pendingWelcomeBackSession?.eligible);
   const presentationGeneration = beginLoginPresentationSequence({
@@ -21700,6 +21675,8 @@ async function synchronizeForegroundGame(awayMs = 0, { longRefresh = false } = {
   if (shouldRestartRealtime) refreshTasks.push(Promise.resolve(restartOnlineRealtimeSubscriptionsForResume()));
 
   const refreshCompletion = Promise.allSettled(refreshTasks);
+  void recoverPendingOnlineArmyMovements();
+  retryOverdueOnlineArmyResolutions();
   const economySynced = await economyPromise;
   if (!isCurrentResume()) return false;
   // Present authoritative catch-up immediately. Presence, reports, and the
@@ -21711,14 +21688,13 @@ async function synchronizeForegroundGame(awayMs = 0, { longRefresh = false } = {
   const refreshResults = await refreshCompletion;
   if (!isCurrentResume()) return false;
   retryPendingRewardedAdClaim();
-  recoverPendingOnlineArmyMovements();
-  retryOverdueOnlineArmyResolutions();
   refreshOpenServerDrivenPanels();
   if (economySynced) gameBackgroundProductionCities = [];
   const realtimeResult = shouldRestartRealtime ? refreshResults[refreshResults.length - 1] : null;
   const realtimeSynced = !shouldRestartRealtime
     || (realtimeResult?.status === "fulfilled" && realtimeResult.value === true);
-  return Boolean(economySynced && realtimeSynced);
+  const readsSynced = refreshResults.slice(0, 3).every(result => result.status === "fulfilled" && result.value !== false);
+  return Boolean(economySynced && realtimeSynced && readsSynced);
 }
 
 function scheduleForegroundResumeRetry() {
@@ -29338,6 +29314,7 @@ function cancelAuthoritativeRoutePreviewRefresh() {
     authoritativeRoutePreviewTimer = 0;
   }
   authoritativeRoutePreviewRequestId += 1;
+  authoritativeRoutePreviewPendingKey = "";
 }
 
 function scheduleAuthoritativeRoutePreviewRefresh(source, target, route, orderKind = activeTroopOrderKind) {
@@ -29354,14 +29331,21 @@ function scheduleAuthoritativeRoutePreviewRefresh(source, target, route, orderKi
     cancelAuthoritativeRoutePreviewRefresh();
     return;
   }
+  const requestScope = getOnlineRequestScope();
+  const pendingKey = [requestScope, getCityRegionId(source), source.id, getCityRegionId(target), target.id, orderKind, selectedBand].join(":");
+  // Repainting the same slider must not invalidate a slow, still useful request.
+  if (authoritativeRoutePreviewPendingKey === pendingKey) return;
   if (authoritativeRoutePreviewTimer) window.clearTimeout(authoritativeRoutePreviewTimer);
   const requestId = ++authoritativeRoutePreviewRequestId;
+  authoritativeRoutePreviewPendingKey = pendingKey;
   const requestedTroops = selectedTroopAmount;
   authoritativeRoutePreviewTimer = window.setTimeout(async () => {
     authoritativeRoutePreviewTimer = 0;
     const refreshedRoute = await requestAuthoritativeOrderRoute(source, target, orderKind, requestedTroops);
+    if (requestId === authoritativeRoutePreviewRequestId) authoritativeRoutePreviewPendingKey = "";
     if (
       requestId !== authoritativeRoutePreviewRequestId
+      || requestScope !== getOnlineRequestScope()
       || !troopSliderActive
       || !modal.open
       || !modal.classList.contains("troop-slider-modal")
@@ -39052,6 +39036,11 @@ document.addEventListener("freeze", markGameBackgrounded);
 document.addEventListener("resume", () => handleGameForegroundSignal("resume"));
 window.addEventListener("online", () => {
   handleGameForegroundSignal("online", { force: true });
+});
+window.addEventListener("offline", () => {
+  onlineRealtimeRecoveryNeeded = true;
+  onlineLastError = "Connection interrupted. Reconnecting will refresh your kingdom and order confirmations.";
+  updateOnlineUi();
 });
 document.addEventListener("keydown", event => {
   if (event.key === "F8") {

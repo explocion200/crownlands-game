@@ -305,6 +305,7 @@ async function validateAsyncBehavior() {
     FOREGROUND_LONG_RESUME_MS: 60_000,
     ONLINE_WORLD_ID: "world",
     getCurrentOnlineUid: () => "qa",
+    getOnlineRequestScope: () => "qa:world:reset:shard",
     pendingWelcomeBackSession: null,
     onlineRealtimeRecoveryNeeded: false,
     navigator: { onLine: true },
@@ -345,15 +346,24 @@ async function validateAsyncBehavior() {
   vm.runInContext(functionSource("synchronizeForegroundGame"), foregroundContext, { filename: "game.js" });
   let finishPresence;
   let resumePaints = 0;
+  let recoveryCalls = 0;
+  foregroundContext.recoverPendingOnlineArmyMovements = () => { recoveryCalls += 1; };
   foregroundContext.publishOnlinePresence = () => new Promise(resolve => { finishPresence = resolve; });
   foregroundContext.renderAll = () => { resumePaints += 1; };
   const slowPresenceResume = foregroundContext.synchronizeForegroundGame(120_000);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(resumePaints, 1, "Fresh authoritative economy waited for slow background presence before painting.");
+  assert.equal(recoveryCalls, 1, "Order confirmation recovery waited for slow presence.");
   finishPresence(true);
   assert.equal(await slowPresenceResume, true);
   assert.equal(resumePaints, 1, "Completing unrelated resume reads caused a second full-map repaint.");
   foregroundContext.publishOnlinePresence = () => true;
+  foregroundContext.loadServerReportsOnce = () => false;
+  assert.equal(await foregroundContext.synchronizeForegroundGame(5000), false, "A failed report refresh was reported as a successful resume.");
+  foregroundContext.loadServerReportsOnce = () => true;
+  foregroundContext.refreshAllOwnedCities = () => false;
+  assert.equal(await foregroundContext.synchronizeForegroundGame(5000), false, "A failed city roster refresh was reported as a successful resume.");
+  foregroundContext.refreshAllOwnedCities = () => true;
   foregroundEconomyOptions.length = 0;
   foregroundPresentationStarts.length = 0;
   assert.equal(await foregroundContext.synchronizeForegroundGame(120_000), true);

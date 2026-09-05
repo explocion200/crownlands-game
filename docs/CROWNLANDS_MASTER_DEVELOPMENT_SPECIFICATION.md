@@ -1,9 +1,9 @@
 # Crownlands Master Development Specification
 
-**Version:** 1.34
-**Effective date:** September 4, 2026
+**Version:** 1.35
+**Effective date:** September 5, 2026
 **Document status:** Authoritative baseline with implementation and release verification
-**Evidence reviewed through:** September 4, 2026
+**Evidence reviewed through:** September 5, 2026
 
 > [!IMPORTANT]
 > This specification is the authority for intended Crownlands behavior and confirmed design decisions. The current Git repository and backend are the authority for current technical implementation. A verified production build is the authority for what players can actually use in that release channel. These states must never be silently conflated.
@@ -952,6 +952,12 @@ The held Core-expansion Functions, rules, indexes, and web client were deployed 
 
 Implementation and measurement detail: [Responsive gameplay performance review](./RESPONSIVE_GAMEPLAY_PERFORMANCE.md). Release-channel verification is recorded in the release handoff; these requirements alone do not establish deployment.
 
+- Route previews must preserve useful in-flight results for unchanged selections and avoid unnecessary write locks. Actual launch remains authoritative for current eligibility, resources, route, modifiers, and duration.
+- An interrupted scout or army response must retain its original request ID across retries and reloads. Reconnect recovers accepted orders independently by reading canonical receipts; it must never automatically send an unconfirmed action. Completed orders refresh their results without creating another march or charge.
+- Account and realm changes invalidate outstanding results. Failed foreground report or city reads must trigger the existing recovery retries, while successful unchanged snapshots count as synchronized. Presence delivery must not prevent prompt confirmation recovery.
+
+Implementation and controlled evidence: [Server response and connection reliability](./SERVER_CONNECTION_RELIABILITY.md). Physical phone checks were excluded from this update by the user; deployment status must still be verified separately.
+
 ### Current presentation status
 
 - Broad medieval UI theme and readability corrections: `LIVE — ALL PUBLISHED CHANNELS`.
@@ -1297,6 +1303,12 @@ These remain `PROPOSED` or roadmap-level `PLANNED` directions. Their detailed me
 | Crownlands Work conversations and Codex completion reports | Design and implementation history | Decisions used only when confirmed; reports do not prove deployment |
 
 # Appendix D — Change Log
+
+## v1.35 — September 5, 2026
+
+- Confirmed durable scout/army confirmation recovery without automatic resubmission on reconnect, stale-session isolation, and retrying failed foreground reads.
+- Recorded read-only route previews, retained in-flight preview results, and request-phase diagnostics without changing gameplay balance or authority.
+- Added controlled browser/emulator evidence and the explicit physical-phone testing exclusion. Production release verification remains a separate release step.
 
 ## v1.34 — September 4, 2026
 

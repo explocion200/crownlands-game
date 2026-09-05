@@ -107,6 +107,7 @@ async function march(actor, source, target, kind, minimumMaps) {
 }
 
 async function main() {
+  await verifyReadOnlyPreviewIsolation();
   const [leader, ally] = await Promise.all([user("Road Leader"), user("Road Ally")]);
   const info = await call("getRealmInfo", leader);
   assert.equal(info.worldTopology, "core-expansion-v1");
@@ -171,5 +172,36 @@ async function main() {
   assert(combined.pathSegments.length > 1 && combined.rallyAttack);
   await settle(leader, combined);
   console.log("World travel emulator passed: same/one/two/many-map attacks, scout, transfer, reverse transfer, reinforcement, rally assembly/launch/arrival, forged ETA rejection, intermediate views, reconnect reads, and idempotent launch/arrival.");
+}
+
+async function verifyReadOnlyPreviewIsolation() {
+  const measurements = [];
+  for (const readOnly of [false, true]) {
+    const ref = db.doc(`reliabilityProbe/${readOnly ? "snapshot" : "locking"}`);
+    await ref.set({ value: 1 });
+    let begin, release;
+    const began = new Promise(resolve => { begin = resolve; });
+    const held = new Promise(resolve => { release = resolve; });
+    const reader = db.runTransaction(async transaction => {
+      const [first] = await transaction.getAll(ref);
+      begin(); await held;
+      const [second] = await transaction.getAll(ref);
+      return [first.data().value, second.data().value];
+    }, readOnly ? { readOnly: true } : {});
+    await began;
+    const started = performance.now();
+    let writeCompleted = false;
+    const writer = ref.update({ value: 2 }).then(() => {writeCompleted = true;return performance.now()-started;});
+    let completedWhileHeld;
+    try {
+      await Promise.race([writer, new Promise(resolve => setTimeout(resolve, readOnly ? 3000 : 250))]);
+      completedWhileHeld = writeCompleted;
+    } finally { release(); }
+    const [values, writerMs] = await Promise.all([reader, writer]);
+    assert.deepEqual(values, [1, 1], "Preview reads lost snapshot consistency during a concurrent update.");
+    assert.equal(completedWhileHeld, readOnly, "Preview isolation did not remove its write-blocking read lock.");
+    measurements.push({readOnly,writerMs:Math.round(writerMs),consistentSnapshot:true,completedWhileHeld});
+  }
+  console.log(`Preview transaction isolation: ${JSON.stringify(measurements)}`);
 }
 main().then(() => process.exit(0)).catch(error => { console.error(error.stack); process.exit(1); });
