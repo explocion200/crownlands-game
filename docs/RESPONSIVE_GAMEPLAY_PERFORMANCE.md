@@ -17,7 +17,7 @@
 | Slower devices | Automatic mode previously depended only on reduced-motion preference and was then converted into an explicit mode by the game UI. It now stays automatic when the player has no saved choice, reduces decorative effects after two sustained slow sampling windows, and recovers after five healthy windows. Hidden/startup gaps do not trigger degradation. Explicit settings still win. |
 | Loading/retry feedback | Existing bounded retries and actionable failures are retained. Map-stage text and pending scout controls expose actual progress without fabricated percentages or premature success. |
 | Foreground return | Fresh economy presentation previously waited for the entire refresh group, including presence. It now paints when authoritative economy is ready; independent refreshes still complete and report their own results. The final redundant full-map repaint is removed. Account/world/region checks prevent stale presentation. |
-| Server confirmation | The previous release's two-worker scout settlement queue and receipt-based retry protection remain unchanged. Added bounded, local request-duration diagnostics (50 records, operation/duration/success only) to separate server-response time from UI work. A September 5 production log query was rejected with HTTP 429 RESOURCE_EXHAUSTED, so this review makes no new production server-latency improvement claim. No speculative backend capacity, balance, or scheduler changes were made. |
+| Server confirmation | The previous release's two-worker scout settlement queue and receipt-based retry protection remain unchanged. Added bounded, local request-duration diagnostics (50 records, operation/duration/success only) to separate server-response time from UI work. Production logs show occasional slow route previews, but the available aggregate timings do not identify their cause. No new production server-latency improvement is claimed, and no speculative backend capacity, balance, or scheduler changes were made. |
 
 ## Controlled measurements
 
@@ -34,6 +34,8 @@ Measurements use the repository's loopback browser fixture and current game code
 | Existing chat rows and Shop focus | replaced | preserved |
 
 These observations do not establish physical-device frame rates or authenticated production latency. The existing multi-scout improvement from PR #254 remains the measured server-settlement baseline; intended scouting travel remains separate and unchanged.
+
+A read-only production log query at 18:28 UTC succeeded after an earlier HTTP 429 quota rejection. It sampled the latest 1,000 matching operation entries within the preceding 24 hours and was truncated; it is not a census of that entire interval. Successful route previews (232 samples) had p50 173 ms, p95 5,069 ms, and maximum 15,840 ms; army orders (77 samples) had p50 803 ms and p95 1,922 ms. Army resolution (106 successful samples) had p50 849 ms and p95 3,698 ms, with two separate failures. These are handler execution times, excluding transport and display delay. The preview already reads its independent documents together within an authoritative transaction. The sampled tail does not distinguish route computation, data access, contention, or infrastructure delay, and no production mutation was performed to investigate it.
 
 ## Regression coverage and review
 
