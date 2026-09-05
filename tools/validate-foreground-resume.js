@@ -303,6 +303,8 @@ async function validateAsyncBehavior() {
   const foregroundPresentationStarts = [];
   const foregroundContext = {
     FOREGROUND_LONG_RESUME_MS: 60_000,
+    ONLINE_WORLD_ID: "world",
+    getCurrentOnlineUid: () => "qa",
     pendingWelcomeBackSession: null,
     onlineRealtimeRecoveryNeeded: false,
     navigator: { onLine: true },

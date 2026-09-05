@@ -20,6 +20,7 @@
   const CHAT_QUICK_THREE_MESSAGE_WIDTH = 280;
   const CHAT_MODES = Object.freeze(["closed", "quick", "full"]);
   const CHAT_CHANNELS = Object.freeze(["global", "clan"]);
+  const chatTimeFormatter = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 
   function nextChatMode(current = "closed", action = "toggle") {
     const mode = CHAT_MODES.includes(current) ? current : "closed";
@@ -314,11 +315,35 @@
     const time = documentRef.createElement("time");
     time.dateTime = message.createdAtMs ? new Date(message.createdAtMs).toISOString() : "";
     time.textContent = message.createdAtMs
-      ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(message.createdAtMs)
+      ? chatTimeFormatter.format(message.createdAtMs)
       : "Now";
     line.append(sender, colon, body, time);
     article.append(line);
     return article;
+  }
+
+  function reconcileMessageElements(element, messages, documentRef, onSender) {
+    const existing = new Map(Array.from(element.children, row => [row.dataset.messageKey, row]));
+    let cursor = element.firstElementChild;
+    messages.forEach(message => {
+      const key = `${message.channel}:${message.channelId}:${message.id}`;
+      const signature = JSON.stringify(message);
+      let row = existing.get(key);
+      existing.delete(key);
+      if (!row || row.dataset.messageSignature !== signature) {
+        const replacement = renderMessageElement(documentRef, message, onSender);
+        replacement.dataset.messageKey = key;
+        replacement.dataset.messageSignature = signature;
+        if (row) {
+          if (cursor === row) cursor = replacement;
+          row.replaceWith(replacement);
+        }
+        row = replacement;
+      }
+      if (row !== cursor) element.insertBefore(row, cursor);
+      cursor = row.nextElementSibling;
+    });
+    existing.forEach(row => row.remove());
   }
 
   function createController(options = {}) {
@@ -538,8 +563,11 @@
 
     function renderQuick() {
       pruneGlobalMessages();
-      if (!elements.quickMessages) return;
+      if (!elements.quickMessages || mode !== "quick") return;
       const current = messages[channel].slice(-quickMessageLimit);
+      const signature = JSON.stringify([channel, clanId, current]);
+      if (elements.quickMessages.dataset.messageSignature === signature) return;
+      elements.quickMessages.dataset.messageSignature = signature;
       elements.quickMessages.replaceChildren();
       if (!current.length) {
         const empty = documentRef.createElement("span");
@@ -564,9 +592,12 @@
 
     function renderMessages({ scrollToBottom = false, preserveFromTop = false } = {}) {
       pruneGlobalMessages();
+      if (mode !== "full") return;
       const priorHeight = elements.list.scrollHeight;
       const priorTop = elements.list.scrollTop;
-      elements.list.replaceChildren();
+      const anchor = !scrollToBottom && Array.from(elements.list.children)
+        .find(row => row.offsetTop + row.offsetHeight > priorTop);
+      const anchorOffset = anchor ? anchor.offsetTop - priorTop : 0;
       const current = messages[channel];
       const noClan = channel === "clan" && !clanId;
       const error = errors[channel];
@@ -574,13 +605,14 @@
       elements.empty.textContent = error || (noClan
         ? "You are not currently in a clan."
         : `No ${channel === "clan" ? "clan" : "global"} messages yet. Begin the chronicle.`);
-      current.forEach(message => elements.list.append(renderMessageElement(documentRef, message, senderUid => {
+      reconcileMessageElements(elements.list, current, documentRef, senderUid => {
         windowRef?.dispatchEvent?.(new windowRef.CustomEvent("crownlands:chat-player-profile", {
           detail: { uid: senderUid },
         }));
-      })));
-      if (preserveFromTop) elements.list.scrollTop = priorTop + elements.list.scrollHeight - priorHeight;
-      else if (scrollToBottom) elements.list.scrollTop = elements.list.scrollHeight;
+      });
+      if (scrollToBottom) elements.list.scrollTop = elements.list.scrollHeight;
+      else if (anchor?.isConnected) elements.list.scrollTop = anchor.offsetTop - anchorOffset;
+      else if (preserveFromTop) elements.list.scrollTop = priorTop + elements.list.scrollHeight - priorHeight;
       elements.newMessages.hidden = true;
       elements.loadOlder.hidden = noClan
         || !current.length
@@ -801,6 +833,9 @@
       uid = "";
       clanId = "";
       messages = { global: [], clan: [] };
+      elements.list.replaceChildren();
+      elements.quickMessages.replaceChildren();
+      delete elements.quickMessages.dataset.messageSignature;
       hasOlder = { global: true, clan: true };
       errors = { global: "", clan: "" };
       unread = { global: false, clan: false };

@@ -245,6 +245,8 @@
       this.initialized = false;
       this.destroyed = false;
       this.modePreference = "auto";
+      this.performanceReduced = false;
+      this.frameSample = { previous: 0, elapsed: 0, count: 0, slow: 0, healthy: 0 };
       this.storageKey = STORAGE_KEY;
       this.storage = null;
       this.modeReader = null;
@@ -422,7 +424,39 @@
 
     getEffectiveMode() {
       if (this.modePreference !== "auto") return this.modePreference;
-      return this.mediaQuery?.matches ? "reduced" : "full";
+      return this.mediaQuery?.matches || this.performanceReduced ? "reduced" : "full";
+    }
+
+    sampleFrame(now, active = true) {
+      const sample = this.frameSample;
+      const elapsed = now - sample.previous;
+      sample.previous = now;
+      // A background gap or startup stall is not evidence of sustained load.
+      if (!active || elapsed <= 0 || elapsed > 250) {
+        sample.elapsed = 0;
+        sample.count = 0;
+        sample.slow = 0;
+        sample.healthy = 0;
+        return;
+      }
+      sample.elapsed += elapsed;
+      sample.count += 1;
+      if (sample.elapsed < 1000) return;
+      const average = sample.elapsed / sample.count;
+      sample.slow = average > 24 ? sample.slow + 1 : 0;
+      sample.healthy = average < 20 ? sample.healthy + 1 : 0;
+      sample.elapsed = 0;
+      sample.count = 0;
+      const reduced = sample.slow >= 2 ? true : sample.healthy >= 5 ? false : this.performanceReduced;
+      if (reduced === this.performanceReduced) return;
+      const previousEffectiveMode = this.getEffectiveMode();
+      this.performanceReduced = reduced;
+      if (this.modePreference !== "auto" || previousEffectiveMode === this.getEffectiveMode()) return;
+      this.applyModeAttributes();
+      this.notify("modechange", {
+        preference: "auto", effectiveMode: this.getEffectiveMode(),
+        previousEffectiveMode, source: "frame-pacing",
+      });
     }
 
     subscribeMode(listener) {
@@ -1486,6 +1520,7 @@
         destroyed: this.destroyed,
         preference: this.modePreference,
         effectiveMode: this.getEffectiveMode(),
+        performanceReduced: this.performanceReduced,
         activeEffectCount: this.active.size,
         activeParticleCount: this.activeParticles,
         recentDedupeCount: this.recentDedupe.size,
