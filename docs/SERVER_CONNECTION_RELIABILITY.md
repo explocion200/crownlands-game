@@ -1,0 +1,43 @@
+# Server response and connection reliability
+
+Scope: the currently configured monthly realm (`main-realm-2026-09`, generation `realm-2026-09`, shared shard `shard_0001`). The production pointer was verified read-only on September 5, 2026 at 21:04 UTC. Physical phone testing was explicitly excluded by the user; browser landscape and CPU-throttled checks remain included.
+
+## Confirmed causes and changes
+
+- `previewArmyRoute` used a read-write transaction for a calculation with no writes. Production Firestore uses pessimistic concurrency, so this unnecessarily locked city and economy documents. The preview now obtains a fresh server read timestamp from one profile read, then batches its four calculation reads in a read-only transaction pinned to that timestamp. The extra anchor read prevents an older snapshot from missing an immediately acknowledged equipment change. Launch still validates current ownership, eligibility, resources, speed modifiers, and route in its normal write transaction. No travel formula, intended duration, cost, cooldown, capacity, or world configuration changes.
+- Repainting the same troop slider while its preview was in flight invalidated the earlier request and could discard its useful response. Pending previews now retain a key containing the account, realm, source, target, order kind, and troop-speed band. A changed selection or session still invalidates stale results.
+- Direct scout retries generated a new action ID after a lost response; ordinary march retry IDs existed only in memory. The Firebase adapter now saves an account-and-realm-scoped confirmation record before dispatch and reuses its immutable request ID and payload on retry. Concurrent identical taps share the pending promise. A single short automatic retry remains bounded; definitive rejections release the record, while uncertain outcomes remain recoverable. Storage failure blocks dispatch before resources can be consumed without a recoverable ID.
+- Reconnect/reload reconciliation reads canonical accepted orders with two independent workers and a five-second read timeout. It never automatically launches an unsent order. Completed receipts refresh reports/economy without recreating a march; unknown or temporarily unreadable confirmations remain available for an explicit retry of the original selection. Records are bounded to 40 per account/realm; reaching the limit requests confirmation recovery instead of dropping older uncertain orders.
+- One-time report/city reads and army callbacks now reject results from an earlier account or realm. The callable adapter checks identity before dispatch after initialization and again before returning a response. Successful unchanged report reads count as successful synchronization.
+- Resume previously reported success even if its report or city read failed. These failures now use the existing two- and eight-second retry schedule. Order reconciliation and overdue-arrival resolution start alongside other refreshes. Presence waiting is bounded to five seconds. Offline events mark listeners for recovery; reconnect restarts them through the existing lifecycle.
+- Existing handler-duration logs omitted realm-context time and internal SDK transaction attempts. Request-scoped diagnostics now add total request duration, realm context, world validation, document reads, route planning, transaction duration, and actual transaction callback count. Overlapping phases are not additive. Existing `durationMs` retains its handler-only meaning. New diagnostics do not retain request payloads, player identities, results, or error text.
+
+Read-only transaction semantics are documented by [Firestore](https://firebase.google.com/docs/firestore/transaction-data-contention) and the [Node SDK](https://googleapis.dev/nodejs/firestore/latest/Firestore_.html). Unpinned read-only snapshots may be up to 60 seconds old, so the implementation explicitly supplies the fresh anchor's `readTime`. A preview can still precede a subsequent concurrent update; only the launch transaction authorizes the actual action.
+
+## Measurements and limits
+
+| Controlled experiment | Before | After |
+| --- | --- | --- |
+| Firestore competing write while a preview-style snapshot is held | Writer blocked until reader released; 279 ms in the pinned-snapshot regression run | Writer completed while reader remained held; 7 ms |
+| Separate 1,200 ms held-read probe | Competing write 1,233 ms | Competing write 7 ms |
+| Same-band preview repaint | Earlier in-flight result invalidated | One request retained and its completed duration displayed |
+| Reconnect with one failed report read | Read failure did not affect overall success | Two report reads, one listener restart, then successful recovery in each browser viewport |
+
+Both transaction modes retained a consistent snapshot during the concurrent write. The artificial hold isolates locking behavior; these timings are not a claim that production requests improve by those amounts.
+
+The bounded production baseline at 21:04 UTC contains the latest 500 preview-service log entries within a 24-hour window and is truncated. Its 141 handler samples measured p50 226 ms, p95 481 ms, maximum 669 ms; 216 HTTP samples measured p50 280 ms, p95 560 ms, maximum 1,847 ms. One instance start and no retry messages appeared. An earlier sample had slower tails, but existing logs cannot attribute those tails to a specific phase. Do not compare mismatched traffic windows as a proven production speedup; use the new phase diagnostics after deployment.
+
+## Verification and review
+
+- `tools/validate-connection-recovery.js`: accepted response loss, repeated taps, immutable selection, exactly one simulated charge, reload recovery, independent slow/ready/unknown receipts, definitive and lookup failures, storage failure, canonical owner/world/generation/shard checks, completed receipts, and stale-account results.
+- `tools/validate-responsive-runtime.js`: callable result preservation, bounded diagnostics, and account changes during initialization or an outstanding request.
+- `tools/validate-foreground-resume.js`: immediate authoritative catch-up, independent confirmation recovery, read-failure retries, stale-session guards, and existing listener/heartbeat behavior.
+- `tools/validate-operation-timing.js`: concurrent request isolation, result/error preservation, privacy, read-only options, and SDK callback accounting.
+- `tools/validate-responsive-browser.js`: actual game code with isolated services at 1440×900, 844×390, and 844×390 with 4× CPU slowdown. Each retained one delayed preview, handled browser offline/freeze/resume events, retried one failed report refresh, and finished with one listener restart. Existing pinch, loading, Shop, chat, and map-switch assertions remain. Headless focus emulation models a visible returning tab; it does not substitute for a physical phone.
+- `functions/test/emulator-world-travel.js`: pinned-snapshot lock isolation, seven immediate equipment changes without sleeps/retries, preview/accepted timing parity, same-map and cross-map attacks/scouts/transfers/reinforcements/rallies, forged ETA rejection, intermediate map views, and launch/arrival replay safety.
+
+Internal review checked the combined diff for authority changes, stale callbacks, uncertain-result loss, unintended automatic resubmission, duplicate charges, and unrelated changes. It corrected lookup failures that could otherwise be presented as definitive rejection while a confirmation was still uncertain. The first full emulator attempt also caught a stale ETA immediately after equipping scouting gear. Although the runner's automatic retry passed, the release attempt was stopped; previews were pinned to a fresh server snapshot and immediate equipment-change coverage was added before restarting validation. The obsolete, unused direct-write queue was removed after reference inspection; its entries are not replayed.
+
+## Release requirements
+
+Run `prepare-pr`, the production build, and all required GitHub checks against current main. Merge normally. Deploy the merged Functions source through the established Firebase workflow and the merged web client through the Netlify Git integration. Shared timing instrumentation is part of the Functions source; no rules, indexes, cleanup job, or production-data migration is required. Verify the live merged commit at `https://playcrownlands.com/play/` using signed-out smoke checks and inspect backend deployment evidence. Release metadata, live checks, and any post-deployment latency sample belong in the release handoff; passing local tests alone does not establish deployment.

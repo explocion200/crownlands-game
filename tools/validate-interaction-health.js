@@ -36,7 +36,7 @@ for (const [label, source] of Object.entries({ directScout, nearestScout, nearby
 }
 assert.match(directScout, /pendingDirectScoutTargets\.has/, "Direct scout clicks must suppress duplicate calculations.");
 assert.match(directScout, /usesServerArmyAuthority\(\)[\s\S]*launchAutomaticServerScout/, "Online direct scouts must dispatch target-only without waiting for route batches.");
-assert.match(automaticServerScout, /api\.sendArmyOrder/, "Online direct scouts must use the canonical server army action.");
+assert.match(automaticServerScout, /api\.submitRecoverableArmyOrder/, "Online direct scouts must use the canonical army confirmation adapter.");
 assert.doesNotMatch(automaticServerScout, /fromId|sourceRegionId\s*:/, "The client must not choose an origin for an automatic online scout.");
 assert.match(nearestScout, /await findRoutesAsync/, "Nearest scout selection must use the route worker batch.");
 assert.match(nearbyScout, /await findRoutesAsync/, "Scout Nearby must use the route worker batch.");
@@ -81,7 +81,9 @@ assert.ok(
 assert.match(troopSliderOpen, /void loadAttackProtectionPreview/, "Attack protection must hydrate without blocking the troop panel.");
 assert.doesNotMatch(game, /function showTroopRouteLoadingModal/, "The blocking route-loading modal must stay removed.");
 assert.match(publishOrder, /path:\s*\[\][\s\S]*pathSegments:\s*\[\][\s\S]*pathLength:\s*0/, "Online confirmation must support a route-free intent.");
-assert.match(publishOrder, /isRetryableArmySubmissionError[\s\S]*window\.setTimeout[\s\S]*submitOrder/, "Uncertain launches must retry the same idempotent order.");
+assert.match(publishOrder, /api\.submitRecoverableArmyOrder\(orderPayload\)/, "Uncertain launches must use the durable confirmation adapter.");
+assert.match(fs.readFileSync(path.join(root, "firebaseClient.js"), "utf8"), /api\.sendArmyOrder\(entry\.payload\)[\s\S]*isRetryableArmySubmissionError[\s\S]*window\.setTimeout[\s\S]*return send\(\)/,
+  "Transport retries must preserve the journaled payload and order ID.");
 assert.match(routeRefresh, /AUTHORITATIVE_ROUTE_PREVIEW_DEBOUNCE_MS/, "Troop-band route refreshes must be debounced.");
 assert.match(routeRefresh, /getTroopTravelBandIndex/, "Authoritative route refreshes must track troop travel bands.");
 assert.match(routeRefresh, /requestAuthoritativeOrderRoute/, "Troop-band changes must request a fresh authoritative ETA.");

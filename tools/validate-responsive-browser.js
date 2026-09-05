@@ -10,6 +10,57 @@ const { createMapBenchmarkServer } = require(path.join(root, "tools/map-benchmar
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const artifacts = path.resolve(__dirname, "../release-artifacts/performance");
 
+async function verifyConnectionRecovery(client, evaluate) {
+  const preview = await evaluate(`(async () => {
+    const original = {requestAuthoritativeOrderRoute, supportsAuthoritativeArmyRoutes};
+    const source = state.cities.find(city => city.owner === 'player' && city.troops > 0);
+    const target = state.cities.find(city => city.id !== source.id && getCityRegionId(city) === getCityRegionId(source) && createInstantOrderRoute(source,city)?.points?.length);
+    let calls = 0, finish, requestedTroops;
+    supportsAuthoritativeArmyRoutes = () => true;
+    requestAuthoritativeOrderRoute = (_s,_t,_k,n) => {calls++; requestedTroops=n;return new Promise(resolve => {finish=resolve;});};
+    try {
+      selectedSourceId=source.id;selectedTargetId=target.id;sendMode=true;
+      await showTroopSliderModalAsync(source, target);
+      await new Promise(resolve => setTimeout(resolve, AUTHORITATIVE_ROUTE_PREVIEW_DEBOUNCE_MS+100));
+      if(!activeTroopSliderRoute) throw new Error('Troop fixture did not open: '+modalTitle.textContent);
+      for(let i=0;i<3;i++) {updateTroopSliderModal(source,target,activeTroopSliderRoute.route);await new Promise(resolve=>setTimeout(resolve,50));}
+      const route = activeTroopSliderRoute.route;
+      finish({...route,previewStatus:'authoritative',authoritativeDurationSeconds:30,authoritativeRequestedTroops:requestedTroops,authoritativeSpeedMultiplier:1});
+      await new Promise(resolve=>setTimeout(resolve,50));
+      return {calls,accepted:activeTroopSliderRoute.route.authoritativeDurationSeconds===30};
+    } finally {cancelAuthoritativeRoutePreviewRefresh();requestAuthoritativeOrderRoute=original.requestAuthoritativeOrderRoute;supportsAuthoritativeArmyRoutes=original.supportsAuthoritativeArmyRoutes;modal.close();}
+  })()`);
+  assert.equal(preview.calls,1,"A real troop dialog restarted an in-flight route on repaint.");
+  assert(preview.accepted,"A slow route did not reach the real troop dialog.");
+  await evaluate(`(() => {
+    const original = {usesServerEconomyAuthority,refreshServerEconomy,refreshAllOwnedCities,loadOnlineRegionCitiesForResolution,loadServerReportsOnce,heartbeatGameServerMembership,publishOnlinePresence,restartOnlineRealtimeSubscriptionsForResume};
+    const qa = window.connectionRecoveryQa = {reports:0,restarts:0};
+    usesServerEconomyAuthority=()=>true;refreshServerEconomy=()=>true;refreshAllOwnedCities=()=>true;loadOnlineRegionCitiesForResolution=()=>true;
+    loadServerReportsOnce=()=>++qa.reports>1;heartbeatGameServerMembership=()=>true;publishOnlinePresence=()=>true;
+    restartOnlineRealtimeSubscriptionsForResume=()=>{qa.restarts++;onlineRealtimeRecoveryNeeded=false;return Promise.resolve(true);};
+    qa.restore=()=>{({usesServerEconomyAuthority,refreshServerEconomy,refreshAllOwnedCities,loadOnlineRegionCitiesForResolution,loadServerReportsOnce,heartbeatGameServerMembership,publishOnlinePresence,restartOnlineRealtimeSubscriptionsForResume}=original);};
+  })()`);
+  try {
+    await client.send("Page.bringToFront");
+    await client.send("Emulation.setFocusEmulationEnabled",{enabled:true});
+    await client.send("Network.enable");
+    await client.send("Network.emulateNetworkConditions", {offline:true,latency:0,downloadThroughput:0,uploadThroughput:0});
+    await wait(100);
+    const offline = await evaluate("navigator.onLine===false && onlineRealtimeRecoveryNeeded");
+    assert(offline,"A real offline event did not mark realtime state for recovery.");
+    await client.send("Page.setWebLifecycleState",{state:"frozen"});
+    await wait(100);
+    await client.send("Page.setWebLifecycleState",{state:"active"});
+    await client.send("Page.bringToFront");
+    await client.send("Network.emulateNetworkConditions", {offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1});
+    for(let i=0;i<80 && !await evaluate("connectionRecoveryQa.reports>=2 && !foregroundResumeInFlight");i++) await wait(100);
+    const resumed=await evaluate("({reports:connectionRecoveryQa.reports,restarts:connectionRecoveryQa.restarts,pending:Boolean(foregroundResumeInFlight),online:navigator.onLine,visibility:document.visibilityState,error:onlineLastError})");
+    assert(resumed.online && !resumed.pending && resumed.reports>=2 && resumed.reports<=4 && resumed.restarts>=1,
+      `Reconnect/freeze recovery did not retry failed reports cleanly: ${JSON.stringify(resumed)}`);
+    return {preview,offline,freezeResume:resumed};
+  } finally {await evaluate("connectionRecoveryQa.restore()");}
+}
+
 async function main() {
   const browser = [process.env.CHROME_PATH, "C:/Program Files/Google/Chrome/Application/chrome.exe",
     "/usr/bin/google-chrome", "/usr/bin/chromium"].find(file => file && fs.existsSync(file));
@@ -146,6 +197,7 @@ async function main() {
       })()`);
       assert(switching.neighborResult && switching.returnResult, "Map switch failed.");
       assert.equal(switching.after.duplicates.length, 0, "Map switch duplicated listeners.");
+      const connection = baselineRoot ? null : await verifyConnectionRecovery(client,evaluate);
 
       await client.send("Page.navigate", { url: `${address.url}/docs/visual-qa/chat/index.html` });
       for (let i = 0; i < 80 && !await evaluate("Boolean(window.CrownlandsChatVisualQa)"); i += 1) await wait(100);
@@ -194,7 +246,7 @@ async function main() {
       assert.equal(await evaluate("document.getElementById('chatDialog').open"), true);
       const shot = await client.send("Page.captureScreenshot", {format:"png"});
       fs.writeFileSync(path.join(artifacts, `chat-${baselineRoot?'before':'after'}-${viewport.name}.png`), Buffer.from(shot.data,"base64"));
-      results.push({viewport:viewport.name,startup,pinch,scout,shop,chat,mapSwitch:{outMs:switching.neighborLatencyMs,backMs:switching.returnLatencyMs}});
+      results.push({viewport:viewport.name,startup,pinch,scout,shop,chat,connection,mapSwitch:{outMs:switching.neighborLatencyMs,backMs:switching.returnLatencyMs}});
       console.log(JSON.stringify(results[results.length-1]));
     }
     fs.writeFileSync(path.join(artifacts, `${baselineRoot?'before':'after'}-interactions.json`), JSON.stringify(results,null,2)+'\n');

@@ -1,13 +1,16 @@
 (function () {
   window.CROWNLANDS_PATCH_NOTES = Object.freeze({
-    buildId: "20260905-responsive-gameplay-v1",
-    generatedAt: "2026-09-05T18:20:00.000Z",
+    buildId: "20260905-server-connection-reliability-v1",
+    generatedAt: "2026-09-05T22:00:00.000Z",
     releases: Object.freeze([
       Object.freeze({
-        buildId: "20260905-responsive-gameplay-v1",
+        buildId: "20260905-server-connection-reliability-v1",
         dateKey: "2026-09-05",
         publishedAt: "2026-09-05T12:00:00.000Z",
         notes: Object.freeze([
+          "Travel previews keep working while the troop panel updates and avoid holding up simultaneous city or resource updates.",
+          "Scouts and troop orders retain their confirmation when a connection drops, so retrying the same order can recover its result without sending it twice.",
+          "Returning to the game retries interrupted report and city refreshes and recovers completed order confirmations independently.",
           "Pinch zoom responds in one visual update, and your remaining finger can continue dragging when you finish a pinch.",
           "Scouting immediately shows when an order is being sent. Chat updates and Shop countdowns preserve existing controls and focus.",
           "Independent loading steps run together, and slow presence updates no longer hold map switching or fresh foreground resource updates.",

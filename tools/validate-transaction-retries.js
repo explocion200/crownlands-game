@@ -19,9 +19,12 @@ const retryHelper = sourceRange(
 );
 assert.match(
   retryHelper.source,
-  /return await db\.runTransaction\(operation\)/,
+  /return await measuredTransaction\(operation, transactionOptions\)/,
   "The retry helper no longer delegates each attempt to Firestore."
 );
+const measuredHelper = sourceRange("function measuredTransaction", "function isRetryableTransactionInfrastructureError");
+assert.match(measuredHelper.source, /db\.runTransaction\(transaction =>[\s\S]*return operation\(transaction\)[\s\S]*transactionOptions/,
+  "Timing must preserve Firestore's callback, retries, and read-only options.");
 assert.match(
   retryHelper.source,
   /isRetryableTransactionInfrastructureError\(error\)[\s\S]*?attempt >= maxAttempts/,
@@ -46,7 +49,7 @@ assert.equal(
 );
 for (const match of rawTransactionCalls) {
   const index = match.index;
-  const allowed = (index >= retryHelper.start && index < retryHelper.end)
+  const allowed = (index >= measuredHelper.start && index < measuredHelper.end)
     || (index >= starterClaim.start && index < starterClaim.end);
   assert.ok(allowed, `Unexpected raw Firestore transaction near character ${index}.`);
 }

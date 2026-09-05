@@ -6,6 +6,7 @@ const { FieldPath, FieldValue, Filter, Timestamp, getFirestore } = require("fire
 const { getMessaging } = require("firebase-admin/messaging");
 const crypto = require("node:crypto");
 const { AsyncLocalStorage } = require("node:async_hooks");
+const OPERATION_TIMING = require("./operation-timing");
 const REALM_CONFIG = require("./release-config.json");
 const FORCE_CORE_EXPANSION_EMULATOR = process.env.FUNCTIONS_EMULATOR === "true"
   && process.env.CROWNLANDS_FORCE_CORE_EXPANSION_EMULATOR === "1";
@@ -1214,19 +1215,31 @@ function logOperation(operation, startedAtMs, request = null, outcome = "ok", de
 }
 
 function timedCallable(operation, options, handler) {
-  return onCall(options, async request => {
-    const startedAtMs = Date.now();
-    try {
-      const result = await handler(request);
-      logOperation(operation, startedAtMs, request, "ok", operationResultMetrics(result));
-      return result;
-    } catch (error) {
-      logOperation(operation, startedAtMs, request, "error", {
-        code: safeString(error?.code || "internal", 48),
-      });
-      throw error;
-    }
-  });
+  return firebaseOnCall(options, request => OPERATION_TIMING.run(async () => {
+    const context = await OPERATION_TIMING.measure("realmContext", () => resolveCallableRealmContext(request));
+    return REALM_REQUEST_CONTEXT.run(context, async () => {
+      const startedAtMs = Date.now();
+      try {
+        const result = await handler(request);
+        logOperation(operation, startedAtMs, request, "ok", {
+          ...operationResultMetrics(result), ...OPERATION_TIMING.snapshot(),
+        });
+        return result;
+      } catch (error) {
+        logOperation(operation, startedAtMs, request, "error", {
+          code: safeString(error?.code || "internal", 48), ...OPERATION_TIMING.snapshot(),
+        });
+        throw error;
+      }
+    });
+  }));
+}
+
+function measuredTransaction(operation, transactionOptions) {
+  return OPERATION_TIMING.measure("transaction", () => db.runTransaction(transaction => {
+    OPERATION_TIMING.transactionAttempt();
+    return operation(transaction);
+  }, transactionOptions));
 }
 
 function isRetryableTransactionInfrastructureError(error) {
@@ -1239,11 +1252,11 @@ function isRetryableTransactionInfrastructureError(error) {
     || (code === "3" && details.includes("transaction is invalid or closed"));
 }
 
-async function runTransactionWithInfrastructureRetry(operation, label = "transaction", maxAttempts = 3) {
+async function runTransactionWithInfrastructureRetry(operation, label = "transaction", maxAttempts = 3, transactionOptions) {
   let lastError = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      return await db.runTransaction(operation);
+      return await measuredTransaction(operation, transactionOptions);
     } catch (error) {
       lastError = error;
       if (!isRetryableTransactionInfrastructureError(error) || attempt >= maxAttempts) throw error;
@@ -2740,7 +2753,7 @@ function getActiveServerRegionIds(expansionState = null) {
 async function requireActiveWorldRegionIds(regionIds = []) {
   const normalizedRegionIds = regionIds.map(requireKnownWorldRegionId);
   if (!isCoreExpansionTopologyActive()) return normalizedRegionIds;
-  const expansionState = await ensureCoreExpansionState();
+  const expansionState = await OPERATION_TIMING.measure("worldValidation", () => ensureCoreExpansionState());
   const activeRegionIds = getActiveServerRegionIds(expansionState);
   const inactiveRegionId = normalizedRegionIds.find(regionId => !activeRegionIds.has(regionId));
   if (inactiveRegionId) {
@@ -7505,10 +7518,10 @@ function buildServerGeneratedArmyRoute(source = {}, target = {}) {
   const targetRegionId = requireKnownWorldRegionId(target.regionId || target.startPool);
   const canonicalSource = getCanonicalArmyRouteEndpoint(source, sourceRegionId);
   const canonicalTarget = getCanonicalArmyRouteEndpoint(target, targetRegionId);
-  const route = getAuthoritativeRoutePlannerForRegions([sourceRegionId, targetRegionId]).calculate(
+  const route = OPERATION_TIMING.measure("routePlanning", () => getAuthoritativeRoutePlannerForRegions([sourceRegionId, targetRegionId]).calculate(
     canonicalSource,
     canonicalTarget
-  );
+  ));
   if (!route?.pathSegments?.length || !(route.pathLength > 0)) {
     throw new HttpsError("failed-precondition", "No safe route through the Crownlands terrain could be found.");
   }
@@ -24058,13 +24071,13 @@ exports.previewArmyRoute = timedCallable(
     const playerRef = db.doc(`players/${uid}`);
     const globalStatsRef = playerGlobalStatsRef(uid);
 
+    // Pin all reads to a fresh server read time. An unpinned read-only
+    // transaction may choose an older snapshot and miss a just-equipped item.
+    const snapshotAnchor = await OPERATION_TIMING.measure("documentReads", () => playerRef.get());
     return runTransactionWithInfrastructureRetry(async transaction => {
-      const [sourceSnap, targetSnap, playerSnap, globalStatsSnap] = await Promise.all([
-        transaction.get(sourceRef),
-        transaction.get(targetRef),
-        transaction.get(playerRef),
-        transaction.get(globalStatsRef),
-      ]);
+      const [sourceSnap, targetSnap, playerSnap, globalStatsSnap] = await OPERATION_TIMING.measure(
+        "documentReads", () => transaction.getAll(sourceRef, targetRef, playerRef, globalStatsRef)
+      );
       if (!sourceSnap.exists) throw new HttpsError("not-found", "Source city was not found.");
       const missingTargetCamp = order.targetType === "camp" && !targetSnap.exists
         ? createNeutralRewardCampState(getAuthoritativeRewardCampSeed(order.targetRegionId, order.toId))
@@ -24142,7 +24155,9 @@ exports.previewArmyRoute = timedCallable(
           targetType: order.targetType,
         },
       };
-    }, "previewArmyRoute");
+    // A preview needs a consistent snapshot, but must not lock live economy or
+    // city documents. Launch still validates and charges in its write transaction.
+    }, "previewArmyRoute", 3, { readOnly: true, readTime: snapshotAnchor.readTime });
   }
 );
 
