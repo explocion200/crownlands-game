@@ -940,6 +940,18 @@ The held Core-expansion Functions, rules, indexes, and web client were deployed 
 - Movement HUD, Reports, Chat, and modal layers must stack predictably.
 - Reduced-motion and performance-sensitive behavior must be respected where animation exists.
 
+### Confirmed interaction performance requirements
+
+- Pending action feedback must appear promptly without changing server authority, eligibility, costs, cooldowns, or intended march duration. Presentation failures must not prevent a request from completing or leave a request lock stuck.
+- Pinch zoom applies its camera transform in the same coalesced animation frame. Lifting one finger continues the gesture as a drag; cancellation must not become a city or action tap.
+- Chat updates preserve unchanged message rows, focus, and reading position. Hidden previews avoid presentation work; expiry, moderation, channel access, unread indicators, and reconnect behavior remain authoritative. A queued close event cannot collapse newly reopened chat.
+- Shop countdowns update their text without replacing the item controls. Initial loading overlaps independent saved-state reads while retaining the skill-migration-before-profile dependency. Map readiness requires verified map art and city data, but does not wait for background presence delivery.
+- On returning to the foreground, fresh authoritative economy is presented without waiting for unrelated presence and roster refreshes. Existing synchronization, retries, and stale-account/region guards remain in force.
+- With no explicit animation preference, sustained frame pressure may reduce decorative effects and sustained recovery may restore them. Explicit Full, Reduced, and Off settings and the system reduced-motion preference take precedence.
+- Performance evidence must distinguish controlled browser/emulator results from production measurements. Local diagnostics retain only a bounded set of operation names, durations, and outcomes, without request payloads, identities, or results.
+
+Implementation and measurement detail: [Responsive gameplay performance review](./RESPONSIVE_GAMEPLAY_PERFORMANCE.md). Release-channel verification is recorded in the release handoff; these requirements alone do not establish deployment.
+
 ### Current presentation status
 
 - Broad medieval UI theme and readability corrections: `LIVE — ALL PUBLISHED CHANNELS`.

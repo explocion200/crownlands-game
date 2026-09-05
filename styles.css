@@ -257,6 +257,8 @@ body {
 }
 button, input { font: inherit; }
 button { border: 0; cursor: pointer; touch-action: manipulation; }
+/* Immediate press acknowledgement without moving a control's hit area. */
+:is(dialog, .profile-screen) button:active:not(:disabled) { filter: brightness(.88); }
 button:disabled { opacity: .42; cursor: not-allowed; }
 input { user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; }
 

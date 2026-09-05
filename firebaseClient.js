@@ -475,6 +475,11 @@
     return messages.filter(message => message.createdAtMs > cutoff);
   }
 
+  const serverRequestTimings = [];
+  function getServerRequestTimings() {
+    return serverRequestTimings.map(sample => ({ ...sample }));
+  }
+
   async function callServerFunction(name, payload = {}) {
     await init();
     const uid = requireSignedIn();
@@ -484,21 +489,29 @@
     }
     const callable = client.modules.functions.httpsCallable(client.functions, name);
     const startedAt = performance.now();
-    const result = await callable(sanitizeForFirestore({
-      ...payload,
-      clientReleaseId: APP_RELEASE_ID,
-      clientResetGeneration: RESET_GENERATION,
-      clientWorldId: ONLINE_WORLD_ID,
-      clientRealmShardId: REALM_SHARD_ID,
-    }) || {});
-    const receivedAt = performance.now();
-    const serverTime = Number(result?.data?.serverTimeMs || result?.data?.serverNowMs);
-    // Realm information is freshly sampled; replayed action receipts are not clocks.
-    if (name === "getRealmInfo" && serverTime > 0) {
-      serverClock = { atMs: serverTime + (receivedAt - startedAt) / 2, receivedAt };
-      window.dispatchEvent(new Event("crownlands:server-clock-updated"));
+    let succeeded = false;
+    try {
+      const result = await callable(sanitizeForFirestore({
+        ...payload,
+        clientReleaseId: APP_RELEASE_ID,
+        clientResetGeneration: RESET_GENERATION,
+        clientWorldId: ONLINE_WORLD_ID,
+        clientRealmShardId: REALM_SHARD_ID,
+      }) || {});
+      const receivedAt = performance.now();
+      const serverTime = Number(result?.data?.serverTimeMs || result?.data?.serverNowMs);
+      // Realm information is freshly sampled; replayed action receipts are not clocks.
+      if (name === "getRealmInfo" && serverTime > 0) {
+        serverClock = { atMs: serverTime + (receivedAt - startedAt) / 2, receivedAt };
+        window.dispatchEvent(new Event("crownlands:server-clock-updated"));
+      }
+      succeeded = true;
+      return result?.data || null;
+    } finally {
+      // Bounded, local diagnostics only: no payload, identity, result, or error text.
+      serverRequestTimings.push({ operation: name, durationMs: Math.round(performance.now() - startedAt), succeeded });
+      if (serverRequestTimings.length > 50) serverRequestTimings.shift();
     }
-    return result?.data || null;
   }
 
   async function callSensitiveServerFunction(name, payload = {}) {
@@ -3100,6 +3113,7 @@
     isSignedIn: () => Boolean(client.user?.uid),
     getUser: () => client.user,
     getLastError: () => client.redirectError || client.error,
+    getServerRequestTimings,
   };
 
   init();

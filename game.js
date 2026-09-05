@@ -2583,14 +2583,14 @@ function getSystemAnimationMode() {
 }
 
 function getEffectiveAnimationMode() {
-  return getStoredAnimationMode() || getSystemAnimationMode();
+  return getStoredAnimationMode() || crownlandsAnimations?.getEffectiveMode?.() || getSystemAnimationMode();
 }
 
 function renderAnimationModeSetting() {
   const storedMode = getStoredAnimationMode();
-  const effectiveMode = storedMode || getSystemAnimationMode();
+  crownlandsAnimations?.setMode?.(storedMode || "auto");
+  const effectiveMode = getEffectiveAnimationMode();
   document.documentElement.dataset.animationMode = effectiveMode;
-  crownlandsAnimations?.setMode?.(effectiveMode);
   animationModeButtons.forEach(button => {
     const selected = button.dataset.animationModeOption === effectiveMode;
     button.classList.toggle("active", selected);
@@ -2599,7 +2599,7 @@ function renderAnimationModeSetting() {
   if (animationModeStatus) {
     animationModeStatus.textContent = storedMode
       ? `${effectiveMode.charAt(0).toUpperCase()}${effectiveMode.slice(1)} animations selected.`
-      : `${effectiveMode.charAt(0).toUpperCase()}${effectiveMode.slice(1)} animations selected from your system preference.`;
+      : `${effectiveMode.charAt(0).toUpperCase()}${effectiveMode.slice(1)} animations selected automatically for your motion preference and performance.`;
   }
   return effectiveMode;
 }
@@ -4890,6 +4890,12 @@ function setMapSwitchLoading(label = "") {
   mapFrame.dataset.loadingLabel = loadingLabel;
   if (mapLoadingLabel) mapLoadingLabel.textContent = loadingLabel;
   mapFrame.classList.add("map-switching");
+}
+
+function updateMapLoadingStage(label) {
+  if (!mapSwitchLoading) return;
+  mapFrame.dataset.loadingLabel = label;
+  if (mapLoadingLabel) mapLoadingLabel.textContent = label;
 }
 
 function clearMapSwitchLoading() {
@@ -10275,6 +10281,7 @@ async function scoutTarget(target) {
     return;
   }
   pendingDirectScoutTargets.add(target.id);
+  renderScoutRequestFeedback();
   try {
     if (usesServerArmyAuthority()) {
       try {
@@ -10302,7 +10309,13 @@ async function scoutTarget(target) {
     showToast(`Scout moving from ${source.name} to ${freshTarget.name}`);
   } finally {
     pendingDirectScoutTargets.delete(target.id);
+    renderScoutRequestFeedback();
   }
+}
+
+function renderScoutRequestFeedback() {
+  try { renderCities(true); }
+  catch (error) { console.warn("Scout feedback could not refresh", error); }
 }
 
 async function launchAutomaticServerScout(target) {
@@ -14557,7 +14570,10 @@ async function switchOnlineIsland(regionId, { fromMapPicker = false, transitionS
   if (fromMapPicker && modal.open) modal.close();
   try {
     onlineStatusDetail.textContent = `Preparing ${targetLabel}...`;
-    const mapReady = await preloadIslandMap(targetRegionId);
+    const [mapReady] = await Promise.all([
+      preloadIslandMap(targetRegionId, { fetchPriority: "high" }),
+      ensureRegionDefinitionLoaded(targetRegionId, { protectedRegionIds: [previousRegionId] }),
+    ]);
     if (!mapReady) {
       showToast(`Could not load ${targetLabel} map art.`);
       onlineStatusDetail.textContent = `${previousLabel} connected.`;
@@ -15820,6 +15836,16 @@ async function setupOnlineWorld({ requireOnlineProfile = false } = {}) {
   updateOnlineUi();
   onlineStatusDetail.textContent = "Checking the Crownlands realm...";
   await verifyRealmCompatibility(api);
+  // These reads do not depend on skill migration. Keep the authoritative
+  // profile read after migration so a stale skill build cannot be applied.
+  const savedStateReads = Promise.allSettled([
+    api.loadGameSnapshot
+      ? withTimeout(api.loadGameSnapshot(ONLINE_SAVE_SLOT), 5000, "Cloud player state lookup is taking too long.")
+      : Promise.resolve(null),
+    api.loadPlayerGlobalStats
+      ? withTimeout(api.loadPlayerGlobalStats(), 5000, "Global stats lookup is taking too long.")
+      : Promise.resolve(null),
+  ]);
   let skillPointSyncResult = null;
   if (api.syncSkillPointSystem) {
     onlineStatusDetail.textContent = "Updating skill points...";
@@ -15836,17 +15862,13 @@ async function setupOnlineWorld({ requireOnlineProfile = false } = {}) {
   onlineStatusDetail.textContent = "Finding your home island...";
   let profile = null;
   let cloudSnapshot = null;
-  const [profileResult, snapshotResult, statsResult] = await Promise.allSettled([
-    api.loadPlayerProfile
+  const [profileResults, [snapshotResult, statsResult]] = await Promise.all([
+    Promise.allSettled([api.loadPlayerProfile
       ? withTimeout(api.loadPlayerProfile(), 5000, "Player profile lookup is taking too long.")
-      : Promise.resolve(null),
-    api.loadGameSnapshot
-      ? withTimeout(api.loadGameSnapshot(ONLINE_SAVE_SLOT), 5000, "Cloud player state lookup is taking too long.")
-      : Promise.resolve(null),
-    api.loadPlayerGlobalStats
-      ? withTimeout(api.loadPlayerGlobalStats(), 5000, "Global stats lookup is taking too long.")
-      : Promise.resolve(null),
+      : Promise.resolve(null)]),
+    savedStateReads,
   ]);
+  const [profileResult] = profileResults;
   const profileLoadFailed = profileResult.status === "rejected";
   if (profileResult.status === "fulfilled") profile = profileResult.value;
   else console.warn("Could not load online profile before island setup", profileResult.reason);
@@ -16053,6 +16075,7 @@ async function connectOnlineIsland(regionId, {
     const mapArtReadyPromise = preloadIslandMap(targetRegionId, { fetchPriority: "high" });
     const seed = createOnlineIslandSeed(targetRegionId);
     onlineStatusDetail.textContent = `Preparing ${getRegionLabel(targetRegionId)} (${seed.cities.length} city slots)...`;
+    updateMapLoadingStage(`Connecting to ${getRegionLabel(targetRegionId)}...`);
     const islandSetupPromise = api.ensureMainIsland && !verifiedOnlineIslandSeeds.has(targetRegionId)
       ? withTimeout(api.ensureMainIsland({
         islandId,
@@ -16129,6 +16152,7 @@ async function connectOnlineIsland(regionId, {
     state.attacks = state.attacks.filter(attack => String(attack?.fromId || "") && String(attack?.toId || ""));
 
     onlineStatusDetail.textContent = `Opening ${getRegionLabel(targetRegionId)}...`;
+    updateMapLoadingStage(`Loading ${getRegionLabel(targetRegionId)} cities...`);
     const subscriptionStarted = await startActiveOnlineIslandSubscription(api, islandId, targetRegionId, {
       activateOnFirstSnapshot,
       nextOnlineState,
@@ -16149,7 +16173,9 @@ async function connectOnlineIsland(regionId, {
     subscribeOnlineGlobalStats();
     subscribeOnlineCrownCitadel();
     await recoverPendingOnlineArmyMovements();
-    await publishOnlinePresence(true);
+    // Presence owns its generation guard and retries on the regular heartbeat.
+    // The verified city snapshot already makes this map ready for interaction.
+    void publishOnlinePresence(true);
     queueOnlineIdentityRepair();
     refreshClanState({ silent: true, skipProfileLoad: true });
     updateOnlinePlayersUi();
@@ -20615,6 +20641,7 @@ function getPathMetrics(points) {
 function frame(now) {
   const rawDt = (now - lastFrameTime) / 1000;
   lastFrameTime = now;
+  crownlandsAnimations?.sampleFrame?.(now, Boolean(state) && document.visibilityState !== "hidden" && !isMapInteractionBlocked());
   const dt = Math.min(rawDt, 0.25);
   renderableArmiesFrameCacheActive = true;
   renderableArmiesFrameCache = null;
@@ -21645,6 +21672,10 @@ async function synchronizeForegroundGame(awayMs = 0, { longRefresh = false } = {
 
   const targetRegionId = getActiveOnlineRegionId();
   const shouldRestartRealtime = longRefresh || onlineRealtimeRecoveryNeeded;
+  const resumeUid = getCurrentOnlineUid();
+  const resumeWorld = ONLINE_WORLD_ID;
+  const isCurrentResume = () => resumeUid === getCurrentOnlineUid()
+    && resumeWorld === ONLINE_WORLD_ID && targetRegionId === getActiveOnlineRegionId();
   const shouldShowWelcomeBack = awayMs >= FOREGROUND_LONG_RESUME_MS;
   const shouldRequestWelcomeBack = Boolean(pendingWelcomeBackSession?.eligible);
   const presentationGeneration = beginLoginPresentationSequence({
@@ -21668,17 +21699,20 @@ async function synchronizeForegroundGame(awayMs = 0, { longRefresh = false } = {
   ];
   if (shouldRestartRealtime) refreshTasks.push(Promise.resolve(restartOnlineRealtimeSubscriptionsForResume()));
 
-  const [economySynced, refreshResults] = await Promise.all([
-    economyPromise,
-    Promise.allSettled(refreshTasks),
-  ]);
-  retryPendingRewardedAdClaim();
-  recoverPendingOnlineArmyMovements();
-  retryOverdueOnlineArmyResolutions();
+  const refreshCompletion = Promise.allSettled(refreshTasks);
+  const economySynced = await economyPromise;
+  if (!isCurrentResume()) return false;
+  // Present authoritative catch-up immediately. Presence, reports, and the
+  // roster already publish their own updates and must not delay this paint.
   renderAll();
   markLoginPresentationMapReady(presentationGeneration);
   updateIncomingAttackUi();
   updateOutgoingAttackUi();
+  const refreshResults = await refreshCompletion;
+  if (!isCurrentResume()) return false;
+  retryPendingRewardedAdClaim();
+  recoverPendingOnlineArmyMovements();
+  retryOverdueOnlineArmyResolutions();
   refreshOpenServerDrivenPanels();
   if (economySynced) gameBackgroundProductionCities = [];
   const realtimeResult = shouldRestartRealtime ? refreshResults[refreshResults.length - 1] : null;
@@ -27159,7 +27193,8 @@ function renderSelectedForeignWheel(city) {
   const mapPoint = worldToMapPoint(city);
   const wheel = document.createElement("div");
   const report = getScoutReport(city.id);
-  const pendingScout = getPendingScoutMission(city.id);
+  const scoutPreparing = pendingDirectScoutTargets.has(city.id);
+  const pendingScout = getPendingScoutMission(city.id) || scoutPreparing;
   const friendlyBlockReason = getClanFriendlyBlockReason(city);
   const clanAlly = Boolean(friendlyBlockReason);
   const veilBlockReason = getVeilOfSilenceScoutBlockReason(city, "player");
@@ -27175,9 +27210,9 @@ function renderSelectedForeignWheel(city) {
   wheel.style.top = `${mapPoint.y}px`;
   wheel.innerHTML = `
     <span class="city-wheel-ring" aria-hidden="true"></span>
-    <button class="city-wheel-action cl-action-button cl-action-scout wheel-scout${pendingScout ? " is-pending" : ""}" type="button" aria-label="${scoutBlockReason ? escapeHtml(scoutBlockReason) : `${pendingScout ? "Scout traveling to" : report ? "Scout again" : "Scout"} ${escapeHtml(city.name)}`}" aria-busy="${Boolean(pendingScout)}" ${canScout ? "" : "disabled"}>
+    <button class="city-wheel-action cl-action-button cl-action-scout wheel-scout${pendingScout ? " is-pending" : ""}" type="button" aria-label="${scoutBlockReason ? escapeHtml(scoutBlockReason) : `${scoutPreparing ? "Sending scout to" : pendingScout ? "Scout traveling to" : report ? "Scout again" : "Scout"} ${escapeHtml(city.name)}`}" aria-busy="${Boolean(pendingScout)}" ${canScout ? "" : "disabled"}>
       <span class="wheel-icon" aria-hidden="true">${renderCrownlandsIcon("scout")}</span>
-      <span class="wheel-action-name">${friendlyBlockReason ? "Clan Ally" : veilBlockReason ? "Veiled" : scoutBlockReason ? "Main City" : pendingScout ? "Scouting" : report ? "Rescout" : "Scout"}</span>
+      <span class="wheel-action-name">${friendlyBlockReason ? "Clan Ally" : veilBlockReason ? "Veiled" : scoutBlockReason ? "Main City" : scoutPreparing ? "Sending" : pendingScout ? "Scouting" : report ? "Rescout" : "Scout"}</span>
     </button>
     <button class="city-wheel-action cl-action-button ${clanAlly ? "cl-action-reinforce wheel-reinforce" : "cl-action-attack"} wheel-attack" type="button" aria-label="${clanAlly ? `Reinforce ${escapeHtml(city.name)}` : mainCityBlockReason ? escapeHtml(mainCityBlockReason) : `Attack ${escapeHtml(city.name)}`}" ${canAttack ? "" : "disabled"}>
       <span class="wheel-icon" aria-hidden="true">${renderCrownlandsIcon(clanAlly ? "reinforcement" : "attack")}</span>
@@ -27219,7 +27254,8 @@ function renderSelectedStrongholdWheel(stronghold) {
   const owned = stronghold.owner === "player";
   const clanAlly = isClanAllyCity(stronghold);
   const report = owned ? null : getScoutReport(stronghold.id);
-  const pendingScout = owned ? null : getPendingScoutMission(stronghold.id);
+  const scoutPreparing = !owned && pendingDirectScoutTargets.has(stronghold.id);
+  const pendingScout = owned ? null : getPendingScoutMission(stronghold.id) || scoutPreparing;
   const veilBlockReason = owned ? "" : getVeilOfSilenceScoutBlockReason(stronghold, "player");
   const availableSources = playerCities().filter(city => city.id !== stronghold.id && Math.floor(Number(city.troops) || 0) > 0);
   const canScout = !owned && !clanAlly && !veilBlockReason && !pendingScout && availableSources.length > 0;
@@ -27238,9 +27274,9 @@ function renderSelectedStrongholdWheel(stronghold) {
   wheel.style.setProperty("--camp-wheel-size", `${wheelSize}px`);
   wheel.style.setProperty("--camp-action-offset", `${actionOffset}px`);
   wheel.innerHTML = `
-    <button class="gold-camp-wheel-action cl-action-button ${owned ? "cl-action-send" : "cl-action-scout"} camp-scout-action${pendingScout ? " is-pending" : ""}" type="button" aria-label="${owned ? `Send troops from ${escapeHtml(stronghold.name)}` : veilBlockReason ? escapeHtml(veilBlockReason) : pendingScout ? `Scout traveling to ${escapeHtml(stronghold.name)}` : report ? `Scout ${escapeHtml(stronghold.name)} again` : `Scout ${escapeHtml(stronghold.name)}`}" aria-busy="${Boolean(!owned && pendingScout)}" ${owned ? canSend ? "" : "disabled" : canScout ? "" : "disabled"}>
+    <button class="gold-camp-wheel-action cl-action-button ${owned ? "cl-action-send" : "cl-action-scout"} camp-scout-action${pendingScout ? " is-pending" : ""}" type="button" aria-label="${owned ? `Send troops from ${escapeHtml(stronghold.name)}` : veilBlockReason ? escapeHtml(veilBlockReason) : scoutPreparing ? `Sending scout to ${escapeHtml(stronghold.name)}` : pendingScout ? `Scout traveling to ${escapeHtml(stronghold.name)}` : report ? `Scout ${escapeHtml(stronghold.name)} again` : `Scout ${escapeHtml(stronghold.name)}`}" aria-busy="${Boolean(!owned && pendingScout)}" ${owned ? canSend ? "" : "disabled" : canScout ? "" : "disabled"}>
       <span aria-hidden="true">${renderCrownlandsIcon(owned ? "outgoing" : "scout")}</span>
-      <strong>${owned ? "Send" : veilBlockReason ? "Veiled" : pendingScout ? "Scouting" : report ? "Rescout" : "Scout"}</strong>
+      <strong>${owned ? "Send" : veilBlockReason ? "Veiled" : scoutPreparing ? "Sending" : pendingScout ? "Scouting" : report ? "Rescout" : "Scout"}</strong>
     </button>
     <button class="gold-camp-wheel-action cl-action-button cl-action-info camp-info-action" type="button" aria-label="Open ${escapeHtml(stronghold.name)} information">
       <span aria-hidden="true">${renderCrownlandsIcon("information")}</span>
@@ -27314,7 +27350,8 @@ function renderSelectedRewardCampWheel(camp) {
   const isHeldByPlayer = camp.owner === "player";
   const clanAlly = isClanAllyCity(camp);
   const report = getScoutReport(camp.id);
-  const pendingScout = getPendingScoutMission(camp.id);
+  const scoutPreparing = pendingDirectScoutTargets.has(camp.id);
+  const pendingScout = getPendingScoutMission(camp.id) || scoutPreparing;
   const canSend = playerCities().some(city => Math.floor(Number(city.troops) || 0) > 0);
   const canScout = !isHeldByPlayer && !clanAlly && !pendingScout && canSend;
   const canRecall = isHeldByPlayer && camp.payoutPending && !rewardCampRecallRequests.has(camp.id);
@@ -27326,9 +27363,9 @@ function renderSelectedRewardCampWheel(camp) {
   wheel.style.setProperty("--camp-wheel-size", `${wheelSize}px`);
   wheel.style.setProperty("--camp-action-offset", `${Math.max(82, Math.min(116, wheelSize * .7))}px`);
   wheel.innerHTML = `
-    <button class="gold-camp-wheel-action cl-action-button ${isHeldByPlayer ? "cl-action-send camp-recall-action" : `cl-action-scout camp-scout-action${pendingScout ? " is-pending" : ""}`}" type="button" aria-label="${isHeldByPlayer ? `Recall stationed troops from ${escapeHtml(camp.name)}` : clanAlly ? "Clan allies cannot be scouted" : pendingScout ? `Scout traveling to ${escapeHtml(camp.name)}` : report ? `Scout ${escapeHtml(camp.name)} again` : `Scout ${escapeHtml(camp.name)}`}" aria-busy="${Boolean(!isHeldByPlayer && pendingScout)}" ${isHeldByPlayer ? canRecall ? "" : "disabled" : canScout ? "" : "disabled"}>
+    <button class="gold-camp-wheel-action cl-action-button ${isHeldByPlayer ? "cl-action-send camp-recall-action" : `cl-action-scout camp-scout-action${pendingScout ? " is-pending" : ""}`}" type="button" aria-label="${isHeldByPlayer ? `Recall stationed troops from ${escapeHtml(camp.name)}` : clanAlly ? "Clan allies cannot be scouted" : scoutPreparing ? `Sending scout to ${escapeHtml(camp.name)}` : pendingScout ? `Scout traveling to ${escapeHtml(camp.name)}` : report ? `Scout ${escapeHtml(camp.name)} again` : `Scout ${escapeHtml(camp.name)}`}" aria-busy="${Boolean(!isHeldByPlayer && pendingScout)}" ${isHeldByPlayer ? canRecall ? "" : "disabled" : canScout ? "" : "disabled"}>
       <span aria-hidden="true">${renderCrownlandsIcon(isHeldByPlayer ? "back" : "scout")}</span>
-      <strong>${isHeldByPlayer ? rewardCampRecallRequests.has(camp.id) ? "Recalling" : "Recall" : clanAlly ? "Clan Ally" : pendingScout ? "Scouting" : report ? "Rescout" : "Scout"}</strong>
+      <strong>${isHeldByPlayer ? rewardCampRecallRequests.has(camp.id) ? "Recalling" : "Recall" : clanAlly ? "Clan Ally" : scoutPreparing ? "Sending" : pendingScout ? "Scouting" : report ? "Rescout" : "Scout"}</strong>
     </button>
     <button class="gold-camp-wheel-action cl-action-button cl-action-info camp-info-action" type="button" aria-label="Open ${escapeHtml(camp.name)} information">
       <span aria-hidden="true">${renderCrownlandsIcon("information")}</span>
@@ -28981,10 +29018,13 @@ function updatePerformancePanel(_now = performance.now()) {
     effectsAudioError ? `effects ${effectsAudioError}` : "",
     lifecycleAudioError ? `lifecycle ${lifecycleAudioError}` : "",
   ].filter(Boolean).join(" · ") || "none";
+  const recentRequests = getOnlineApi()?.getServerRequestTimings?.() || [];
+  const latestRequest = recentRequests[recentRequests.length - 1];
   panel.hidden = false;
   panel.innerHTML = `
     <strong>Crownlands Perf</strong>
     <span>FPS: ${Math.round(performanceFps)}</span>
+    <span>Last server response: ${latestRequest ? `${escapeHtml(latestRequest.operation)} ${latestRequest.durationMs}ms${latestRequest.succeeded ? "" : " (failed)"}` : "none"}</span>
     <span>Region: ${escapeHtml(getRegionLabel(activeRegionId))}</span>
     <span>Cities: ${formatNumber(visibleCityMarkers)} visible</span>
     <span>Camps: ${formatNumber(visibleCampMarkers)} visible</span>
@@ -29066,62 +29106,6 @@ function renderSelectionChangeNow() {
   lastRenderTime = performance.now();
   renderCities();
   renderPanel();
-}
-
-function renderSendConfirmPanel(source, target) {
-  if (!source || !target || source.id === target.id) {
-    selectedTargetId = null;
-    return renderPanel();
-  }
-
-  const isTransfer = target.owner === "player";
-  const iconName = isTransfer ? "transfer" : "attack";
-  const label = isTransfer ? "Move" : "Attack";
-  const route = findRoute(source, target);
-  const sendAmount = source.troops > 0 ? clamp(Math.floor(source.troops * selectedMarchPercent), 1, source.troops) : 0;
-  let travel = route ? travelTime(source, target, "player", route.length, sendAmount, isTransfer ? "transfer" : "attack") : Infinity;
-  let outcomeHtml = "";
-
-  if (!isTransfer && route) {
-    const preview = calculateBattlePreview(source, target, selectedMarchPercent);
-    travel = preview.travel;
-    const protectionNotice = getAttackProtectionNotice(preview.attackProtection);
-    outcomeHtml = `
-      <div class="send-outcome ${preview.success ? "win" : "lose"}">
-        <strong>${preview.success ? "Likely Victory" : "Likely Defeat"}</strong>
-        <span>${preview.label} - ${Math.round(preview.xpEfficiency * 100)}% XP</span>
-        <small>${preview.success
-          ? `Est. survivors: ${formatNumber(preview.survivors)} - ${preview.xpLabel} ${formatNumber(preview.captureXp)}`
-          : `Est. defenders left: ${formatNumber(preview.defendersLeft)} - ${preview.xpLabel} ${formatNumber(preview.captureXp)}`}</small>
-        ${protectionNotice ? `<small>${escapeHtml(protectionNotice)}</small>` : ""}
-      </div>
-    `;
-  }
-
-
-  panelTitle.textContent = `${label} troops`;
-  panelSubtitle.textContent = `${source.name} \u2192 ${target.name}`;
-  selectedInfo.innerHTML = `
-    <div class="send-confirm-card">
-      <div class="send-icon">${renderCrownlandsIcon(iconName)}</div>
-      <div class="send-main">
-        <strong>${escapeHtml(source.name)} \u2192 ${escapeHtml(target.name)}</strong>
-        <span>${formatPercent(selectedMarchPercent)} selected \u00B7 ${formatNumber(sendAmount)} troops</span>
-        <span>${route ? `${formatDuration(travel)} travel \u00B7 ${formatNumber(route.length)} distance` : "No valid land route"}</span>
-      </div>
-    </div>
-    ${outcomeHtml}
-  `;
-
-  renderMarchButtons();
-  actionButtons.appendChild(button(label, () => confirmSendOrder(), !route || sendAmount < 1, isTransfer ? "move-action" : "attack-action"));
-  actionButtons.appendChild(button("Cancel", cancelSendMode, false, "secondary"));
-}
-function renderMarchButtons() {
-  [0.25, 0.5, 0.8, 1].forEach(percent => {
-    const isActive = selectedMarchPercent === percent;
-    actionButtons.appendChild(button(`${formatPercent(percent)}`, () => setMarchPercent(percent), false, isActive ? "active-march" : "secondary"));
-  });
 }
 
 function selectCity(id) {
@@ -30440,21 +30424,6 @@ async function relinquishCity(cityId) {
     return false;
   } finally {
     serverCityRelinquishInFlightIds.delete(inFlightKey);
-  }
-}
-
-function confirmSendOrder() {
-  const source = selectedSourceId ? cityById(selectedSourceId) : null;
-  const target = selectedTargetId ? getArmyTargetById(selectedTargetId) : null;
-  if (!source || !target) return;
-  if (target.owner !== "player") {
-    showTroopSliderModal(source, target);
-    return;
-  }
-  const launched = launchAttack(source.id, target.id, selectedMarchPercent, "player");
-  if (launched) {
-    clearSelection(false);
-    renderAll();
   }
 }
 
@@ -33559,7 +33528,10 @@ function startRewardedAdShopCountdown() {
       rewardedAdShopCountdownTimer = 0;
       return;
     }
-    if (getRewardedAdCooldownRemainingMs() > 0) renderShopModal();
+    if (getRewardedAdCooldownRemainingMs() > 0) {
+      const availability = getRewardedAdAvailability();
+      modalBody.querySelectorAll(".rewarded-ad-availability").forEach(element => setTextIfChanged(element, availability.text));
+    }
     else if (rewardedAdStatus?.reason === "cooldown") refreshRewardedAdStatus();
   }, 1000);
 }
@@ -34611,15 +34583,6 @@ function showAttackPreview(source, target) {
   });
   modalBody.querySelector("#cancelAttackBtn").addEventListener("click", () => modal.close());
   if (!modal.open) modal.showModal();
-}
-
-function setMarchPercent(percent) {
-  selectedMarchPercent = normalizeMarchPercent(percent);
-  if (state) {
-    state.marchPercent = selectedMarchPercent;
-    saveGame();
-  }
-  renderAll();
 }
 
 function clearSelection(shouldRender = true) {
@@ -38376,7 +38339,9 @@ function updatePinch() {
   const offset = getMapViewportOffset(rect);
   camera.x = pinchState.mapPoint.x - (mid.x - rect.left - offset.x) / zoom;
   camera.y = pinchState.mapPoint.y - (mid.y - rect.top - offset.y) / zoom;
-  scheduleCameraTransform();
+  // updatePinch already runs in the coalesced animation frame. Paint its camera
+  // here instead of adding another frame of finger-to-map latency.
+  updateCameraTransform();
   markZoomInteraction();
 }
 
@@ -38632,6 +38597,14 @@ function finishTrackedMapPointer(event, { renderPanelAfter = true } = {}) {
   }
 
   if (activePointers.size < 2) pinchState = null;
+  if (wasPinching && event.type !== "pointercancel" && activePointers.size === 1) {
+    const [pointerId, point] = activePointers.entries().next().value;
+    panState = {
+      pointerId, startX: point.x, startY: point.y,
+      cameraX: camera.x, cameraY: camera.y,
+      moved: true, startedOnMapNode: false, pointerType: "touch", zoom,
+    };
+  }
   if (activePointers.size === 0) mapFrame.classList.remove("dragging");
   try {
     mapFrame.releasePointerCapture?.(event.pointerId);
@@ -39280,14 +39253,19 @@ try {
     worldLayer: mapVfxLayer,
     screenLayer: screenVfxLayer,
     mapStage: mapTransitionStage,
+    onModeChange: event => { if (event.source === "frame-pacing") renderAnimationModeSetting(); },
   });
 } catch (error) {
   console.warn("Crownlands animation manager could not initialize", error);
 }
 renderAnimationModeSetting();
 applyWorldDimensions();
-renderWorldMap();
-renderIslandTeleporters();
+// The login screen has its own art. Load the player's actual map when setup
+// knows their region, instead of competing with login for an unused map image.
+if (state) {
+  renderWorldMap();
+  renderIslandTeleporters();
+}
 updateFullscreenButton();
 updateOnlineUi();
 const holdingTowerQaScenario = getHoldingTowerQaScenario();
