@@ -10281,7 +10281,7 @@ async function scoutTarget(target) {
     return;
   }
   pendingDirectScoutTargets.add(target.id);
-  renderCities(true);
+  renderScoutRequestFeedback();
   try {
     if (usesServerArmyAuthority()) {
       try {
@@ -10309,8 +10309,13 @@ async function scoutTarget(target) {
     showToast(`Scout moving from ${source.name} to ${freshTarget.name}`);
   } finally {
     pendingDirectScoutTargets.delete(target.id);
-    renderCities(true);
+    renderScoutRequestFeedback();
   }
+}
+
+function renderScoutRequestFeedback() {
+  try { renderCities(true); }
+  catch (error) { console.warn("Scout feedback could not refresh", error); }
 }
 
 async function launchAutomaticServerScout(target) {
@@ -30422,21 +30427,6 @@ async function relinquishCity(cityId) {
   }
 }
 
-function confirmSendOrder() {
-  const source = selectedSourceId ? cityById(selectedSourceId) : null;
-  const target = selectedTargetId ? getArmyTargetById(selectedTargetId) : null;
-  if (!source || !target) return;
-  if (target.owner !== "player") {
-    showTroopSliderModal(source, target);
-    return;
-  }
-  const launched = launchAttack(source.id, target.id, selectedMarchPercent, "player");
-  if (launched) {
-    clearSelection(false);
-    renderAll();
-  }
-}
-
 function playerMarchTo(targetId) {
   const source = selectedSourceId ? cityById(selectedSourceId) : null;
   const target = cityById(targetId);
@@ -34595,15 +34585,6 @@ function showAttackPreview(source, target) {
   if (!modal.open) modal.showModal();
 }
 
-function setMarchPercent(percent) {
-  selectedMarchPercent = normalizeMarchPercent(percent);
-  if (state) {
-    state.marchPercent = selectedMarchPercent;
-    saveGame();
-  }
-  renderAll();
-}
-
 function clearSelection(shouldRender = true) {
   selectedSourceId = null;
   selectedTargetId = null;
@@ -38616,6 +38597,14 @@ function finishTrackedMapPointer(event, { renderPanelAfter = true } = {}) {
   }
 
   if (activePointers.size < 2) pinchState = null;
+  if (wasPinching && event.type !== "pointercancel" && activePointers.size === 1) {
+    const [pointerId, point] = activePointers.entries().next().value;
+    panState = {
+      pointerId, startX: point.x, startY: point.y,
+      cameraX: camera.x, cameraY: camera.y,
+      moved: true, startedOnMapNode: false, pointerType: "touch", zoom,
+    };
+  }
   if (activePointers.size === 0) mapFrame.classList.remove("dragging");
   try {
     mapFrame.releasePointerCapture?.(event.pointerId);

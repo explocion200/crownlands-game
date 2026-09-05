@@ -516,6 +516,7 @@
     function setMode(nextMode) {
       const normalizedMode = CHAT_MODES.includes(nextMode) ? nextMode : "closed";
       mode = normalizedMode;
+      dialogCloseTarget = mode === "full" ? "" : mode;
       elements.quick.hidden = mode !== "quick";
       elements.toggle.classList.toggle("is-expanded", mode !== "closed");
       elements.toggle.setAttribute("aria-expanded", String(mode !== "closed"));
@@ -889,6 +890,7 @@
       if (event.target === elements.dialog) updateMode("close");
     });
     elements.dialog.addEventListener("close", () => {
+      if (elements.dialog.open) return; // A queued close must not collapse a newly reopened chat.
       const target = dialogCloseTarget || "closed";
       dialogCloseTarget = "";
       mode = target;

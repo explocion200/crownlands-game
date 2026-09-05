@@ -49,10 +49,11 @@ async function main() {
       if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || JSON.stringify(result.exceptionDetails));
       return result.result.value;
     };
-    for (const viewport of [{ name: "desktop", width: 1440, height: 900 }, { name: "landscape", width: 844, height: 390 }]) {
+    for (const viewport of [{ name: "desktop", width: 1440, height: 900 }, { name: "landscape", width: 844, height: 390 }, { name: "landscape-4x", width: 844, height: 390, cpuRate: 4 }]) {
       await client.send("Emulation.setDeviceMetricsOverride", { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: false });
+      await client.send("Emulation.setCPUThrottlingRate", {rate:viewport.cpuRate || 1});
       await client.send("Page.navigate", { url: `${address.url}/__benchmark__/?scenario=A&visualMarches=0` });
-      for (let i = 0; i < 120 && !await evaluate("window.__CROWNLANDS_BENCHMARK__?.getStatus().status === 'ready'"); i += 1) await wait(250);
+      for (let i = 0; i < 480 && !await evaluate("window.__CROWNLANDS_BENCHMARK__?.getStatus().status === 'ready'"); i += 1) await wait(250);
       assert.equal(await evaluate("window.__CROWNLANDS_BENCHMARK__.getStatus().status"), "ready");
       const startup = await evaluate("({...performanceStartupQa,readPhaseMs:Math.max(performanceStartupQa.skillEnd,performanceStartupQa.snapshotEnd)-Math.min(performanceStartupQa.skillStart,performanceStartupQa.snapshotStart)})");
       assert(startup.profileStart >= startup.skillEnd, "Startup read the profile before skill migration settled.");
@@ -74,13 +75,18 @@ async function main() {
           const firstFrameMs = performance.now() - start;
           requestAnimationFrame(() => {
             const secondFrameChanged = before !== mapWorld.style.transform;
+            finishTrackedMapPointer({pointerId:92,type:'pointerup'}, {renderPanelAfter:false});
+            const resumedDrag = panState?.pointerId === 91 && panState.moved === true;
             activePointers.clear(); pinchState = null; panState = null;
             mapFrame.classList.remove('dragging'); finishCameraInteraction();
-            resolve({ firstFrameChanged, secondFrameChanged, firstFrameMs });
+            resolve({ firstFrameChanged, secondFrameChanged, firstFrameMs, resumedDrag });
           });
         });
       })`);
-      if (!baselineRoot) assert(pinch.firstFrameChanged, "Pinch camera did not paint in its first scheduled frame.");
+      if (!baselineRoot) {
+        assert(pinch.firstFrameChanged, "Pinch camera did not paint in its first scheduled frame.");
+        assert(pinch.resumedDrag, "Lifting one pinch finger did not resume dragging with the remaining finger.");
+      }
 
       const scout = await evaluate(`(async () => {
         const target = state.cities.find(city => city.owner === 'neutral' && !isStronghold(city) && !city.isMainCity);
@@ -94,10 +100,21 @@ async function main() {
           const button = buttons[buttons.length - 1];
           const pending = button?.disabled && button?.getAttribute('aria-busy') === 'true' && button?.textContent.includes('Sending');
           finish(true); await task;
-          return { pending, released: !pendingDirectScoutTargets.has(target.id) };
+          const released = !pendingDirectScoutTargets.has(target.id);
+          let failedFeedbackReleased = true;
+          if (typeof renderScoutRequestFeedback === 'function') {
+            const render = renderCities;
+            renderCities = () => { throw new Error('Synthetic presentation failure'); };
+            try {
+              const failedFeedback = scoutTarget(target);
+              finish(true); await failedFeedback;
+              failedFeedbackReleased = !pendingDirectScoutTargets.has(target.id);
+            } finally { renderCities = render; }
+          }
+          return { pending, released, failedFeedbackReleased };
         } finally { launchAutomaticServerScout = originalLaunch; }
       })()`);
-      if (!baselineRoot) assert(scout.pending && scout.released, "Scout request feedback or cleanup failed.");
+      if (!baselineRoot) assert(scout.pending && scout.released && scout.failedFeedbackReleased, "Scout request feedback or cleanup failed.");
 
       const shop = await evaluate(`(() => {
         const interval = window.setInterval;
@@ -133,9 +150,9 @@ async function main() {
       await client.send("Page.navigate", { url: `${address.url}/docs/visual-qa/chat/index.html` });
       for (let i = 0; i < 80 && !await evaluate("Boolean(window.CrownlandsChatVisualQa)"); i += 1) await wait(100);
       const chat = await evaluate(`(() => {
-        CrownlandsChatVisualQa.controller.dispose();
+        CrownlandsChatVisualQa.controller.dispose({resetSession:true});
         const handlers = {};
-        const controller = CrownlandsChat.createController();
+        const controller = CrownlandsChatVisualQa.controller;
         const now = Date.now();
         controller.start({uid:'qa',clanId:'qa-clan',api:{getServerNowMs:()=>now,
           subscribeChatMessages:(options,callbacks)=>{handlers[options.channel]=callbacks;return()=>{};}}});
@@ -172,6 +189,9 @@ async function main() {
         assert(chat.sameFirst && chat.focusPreserved, "Chat updates replaced unchanged rows or focus.");
         assert.equal(chat.added, 100); assert.equal(chat.removedNodes, 0); assert.equal(chat.hiddenMutations, 0);
       }
+      await wait(250);
+      if (!baselineRoot) assert.equal(await evaluate("CrownlandsChatVisualQa.controller.diagnostics().mode"), "full", "A queued native close event collapsed reopened chat.");
+      assert.equal(await evaluate("document.getElementById('chatDialog').open"), true);
       const shot = await client.send("Page.captureScreenshot", {format:"png"});
       fs.writeFileSync(path.join(artifacts, `chat-${baselineRoot?'before':'after'}-${viewport.name}.png`), Buffer.from(shot.data,"base64"));
       results.push({viewport:viewport.name,startup,pinch,scout,shop,chat,mapSwitch:{outMs:switching.neighborLatencyMs,backMs:switching.returnLatencyMs}});

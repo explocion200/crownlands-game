@@ -343,6 +343,19 @@ async function validateAsyncBehavior() {
   };
   vm.createContext(foregroundContext);
   vm.runInContext(functionSource("synchronizeForegroundGame"), foregroundContext, { filename: "game.js" });
+  let finishPresence;
+  let resumePaints = 0;
+  foregroundContext.publishOnlinePresence = () => new Promise(resolve => { finishPresence = resolve; });
+  foregroundContext.renderAll = () => { resumePaints += 1; };
+  const slowPresenceResume = foregroundContext.synchronizeForegroundGame(120_000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(resumePaints, 1, "Fresh authoritative economy waited for slow background presence before painting.");
+  finishPresence(true);
+  assert.equal(await slowPresenceResume, true);
+  assert.equal(resumePaints, 1, "Completing unrelated resume reads caused a second full-map repaint.");
+  foregroundContext.publishOnlinePresence = () => true;
+  foregroundEconomyOptions.length = 0;
+  foregroundPresentationStarts.length = 0;
   assert.equal(await foregroundContext.synchronizeForegroundGame(120_000), true);
   assert.deepEqual(
     { ...foregroundEconomyOptions[0] },
