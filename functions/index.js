@@ -24071,6 +24071,9 @@ exports.previewArmyRoute = timedCallable(
     const playerRef = db.doc(`players/${uid}`);
     const globalStatsRef = playerGlobalStatsRef(uid);
 
+    // Pin all reads to a fresh server read time. An unpinned read-only
+    // transaction may choose an older snapshot and miss a just-equipped item.
+    const snapshotAnchor = await OPERATION_TIMING.measure("documentReads", () => playerRef.get());
     return runTransactionWithInfrastructureRetry(async transaction => {
       const [sourceSnap, targetSnap, playerSnap, globalStatsSnap] = await OPERATION_TIMING.measure(
         "documentReads", () => transaction.getAll(sourceRef, targetRef, playerRef, globalStatsRef)
@@ -24154,7 +24157,7 @@ exports.previewArmyRoute = timedCallable(
       };
     // A preview needs a consistent snapshot, but must not lock live economy or
     // city documents. Launch still validates and charges in its write transaction.
-    }, "previewArmyRoute", 3, { readOnly: true });
+    }, "previewArmyRoute", 3, { readOnly: true, readTime: snapshotAnchor.readTime });
   }
 );
 

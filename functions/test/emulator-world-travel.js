@@ -5,6 +5,7 @@ const { initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 const realm = require("../release-config.json");
 const economy = require("../economy-config.json");
+const commonGear = require("../common-gear.js");
 const { createTravelFixture, canonicalCity } = require("../../tools/world-travel-test-fixtures.js");
 if (!process.env.FIRESTORE_EMULATOR_HOST) throw new Error("This test requires the Firestore emulator.");
 const projectId = process.env.GCLOUD_PROJECT || "crown-land-b15e0";
@@ -135,6 +136,7 @@ async function main() {
   await own(source, leader, 50_000);
   const scoutTarget = canonicalCity(fixture.planner, farRegion, 11);
   await neutral(scoutTarget);
+  await verifyPreviewFreshness(leader, source, scoutTarget);
   await march(leader, source, scoutTarget, "scout", 7);
   for (const [ordinal, minMaps] of [[0, 1], [1, 2], [2, 3], [12, 7]]) {
     const target = canonicalCity(fixture.planner, fixture.activeRegionIds[ordinal], 12);
@@ -179,6 +181,7 @@ async function verifyReadOnlyPreviewIsolation() {
   for (const readOnly of [false, true]) {
     const ref = db.doc(`reliabilityProbe/${readOnly ? "snapshot" : "locking"}`);
     await ref.set({ value: 1 });
+    const anchor = readOnly ? await ref.get() : null;
     let begin, release;
     const began = new Promise(resolve => { begin = resolve; });
     const held = new Promise(resolve => { release = resolve; });
@@ -187,7 +190,7 @@ async function verifyReadOnlyPreviewIsolation() {
       begin(); await held;
       const [second] = await transaction.getAll(ref);
       return [first.data().value, second.data().value];
-    }, readOnly ? { readOnly: true } : {});
+    }, readOnly ? { readOnly: true, readTime: anchor.readTime } : {});
     await began;
     const started = performance.now();
     let writeCompleted = false;
@@ -203,5 +206,23 @@ async function verifyReadOnlyPreviewIsolation() {
     measurements.push({readOnly,writerMs:Math.round(writerMs),consistentSnapshot:true,completedWhileHeld});
   }
   console.log(`Preview transaction isolation: ${JSON.stringify(measurements)}`);
+}
+
+async function verifyPreviewFreshness(actor, source, target) {
+  const definition = commonGear.DEFINITIONS.find(item => item.buildingId === "royal-stables" && item.slot === "necklace");
+  const profile = db.doc(`players/${actor.uid}`);
+  let unequippedDuration;
+  for (const equipped of [false, true, false, true, false, true, false]) {
+    const gear = commonGear.createDefaultState();
+    gear.instances.freshness = { instanceId: "freshness", gearKey: definition.gearKey, level: 5 };
+    if (equipped) gear.equipped[definition.buildingId][definition.slot] = "freshness";
+    await profile.update({ gear: commonGear.normalizeState(gear) });
+    const preview = await call("previewArmyRoute", actor, { fromId: source.id, toId: target.id,
+      sourceRegionId: source.regionId, targetRegionId: target.regionId, kind: "scout", requestedTroops: 1 });
+    if (!unequippedDuration) unequippedDuration = preview.durationMs;
+    if (equipped) assert(preview.durationMs < unequippedDuration, "A just-equipped scouting bonus was missing from the preview.");
+    else assert.equal(preview.durationMs, unequippedDuration, "A just-removed scouting bonus remained in the preview.");
+  }
+  console.log("Preview freshness passed: seven immediate equipment changes reflected without sleeps or retries.");
 }
 main().then(() => process.exit(0)).catch(error => { console.error(error.stack); process.exit(1); });

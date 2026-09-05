@@ -952,7 +952,7 @@ The held Core-expansion Functions, rules, indexes, and web client were deployed 
 
 Implementation and measurement detail: [Responsive gameplay performance review](./RESPONSIVE_GAMEPLAY_PERFORMANCE.md). Release-channel verification is recorded in the release handoff; these requirements alone do not establish deployment.
 
-- Route previews must preserve useful in-flight results for unchanged selections and avoid unnecessary write locks. Actual launch remains authoritative for current eligibility, resources, route, modifiers, and duration.
+- Route previews must preserve useful in-flight results for unchanged selections, reflect acknowledged speed-modifier changes, and avoid unnecessary write locks. Actual launch remains authoritative for current eligibility, resources, route, modifiers, and duration.
 - An interrupted scout or army response must retain its original request ID across retries and reloads. Reconnect recovers accepted orders independently by reading canonical receipts; it must never automatically send an unconfirmed action. Completed orders refresh their results without creating another march or charge.
 - Account and realm changes invalidate outstanding results. Failed foreground report or city reads must trigger the existing recovery retries, while successful unchanged snapshots count as synchronized. Presence delivery must not prevent prompt confirmation recovery.
 

@@ -48,6 +48,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   assert.equal(passedOptions.readOnly,true,"The read-only option was dropped by transaction instrumentation.");
   const preview=source.slice(source.indexOf("exports.previewArmyRoute"),source.indexOf("exports.getSeasonalAchievementStatus"));
   assert.match(preview,/transaction\.getAll\(sourceRef, targetRef, playerRef, globalStatsRef\)/);
-  assert.match(preview,/"previewArmyRoute", 3, \{ readOnly: true \}/);
+  assert.match(preview,/snapshotAnchor = await OPERATION_TIMING.measure\("documentReads", \(\) => playerRef.get\(\)\)/);
+  assert.match(preview,/"previewArmyRoute", 3, \{ readOnly: true, readTime: snapshotAnchor.readTime \}/);
   console.log("Operation timing passed: concurrent isolation, no payload/error retention, preserved results/errors, batched read-only preview, and retry accounting.");
 })().catch(error=>{console.error(error);process.exitCode=1;});
