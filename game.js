@@ -27190,8 +27190,8 @@ function renderSelectedForeignWheel(city) {
   const attackBlockLabel = clanAlly ? "Reinforce" : mainCityBlockReason ? "Main City" : shieldBlockReason ? "Shielded" : "Attack";
   const canAttack = !mainCityBlockReason && !shieldBlockReason && playerCities().some(playerCity => playerCity.troops > 0);
   wheel.className = "city-action-wheel foreign-city-action-wheel";
-  wheel.dataset.onboardingCity = city.id;
   if (clanAlly) wheel.classList.add("clan-ally-action-wheel");
+  wheel.dataset.onboardingCity = city.id;
   wheel.style.left = `${mapPoint.x}px`;
   wheel.style.top = `${mapPoint.y}px`;
   wheel.innerHTML = `
