@@ -4,7 +4,7 @@ This client presentation update adds optional guidance for the first city upgrad
 
 ## Player experience
 
-- A newly confirmed starting-city claim enables the tips. Replayed claims preserve an existing dismissal. Existing players can enable or replay tips through **Profile → Settings → First steps & help**.
+- A newly confirmed starting-city claim enables the tips before any starting-map redirect. Replayed claims preserve an existing dismissal. Existing players can enable or replay tips through **Profile → Settings → First steps & help**.
 - A compact map card follows the selected holding. The corresponding city Info, scout report, attack confirmation, or Camp Info panel explains the action alongside its existing controls.
 - Upgrades show the current projected next-level cost and explain production. Low Gold and incoming-attack conditions use existing checks. Scouting explains the one-troop march, waiting for arrival, Reports, the configured intelligence lifetime, and the limits of a snapshot. Attacks explain choosing troops, reviewing the forecast and travel time, confirming, and reading the arrival result.
 - Camp copy uses the selected Camp's configured hold duration and directs the ruler to its reward allowance. It distinguishes capture from earning a reward, explains contested ownership, and updates if control changes while the panel is open. It does not reveal hidden defender state or direct a new ruler to launch an underpowered army.
@@ -19,6 +19,6 @@ The formerly disconnected Help entry is now available in Settings. Its long prot
 
 Both checks are part of the static release gate. The complete repository gate, production build, required GitHub checks, and combined diff review must pass before merge. This is a client-only release: no Functions source, Firestore rules, indexes, world migration, cleanup job, or production-data change is required. Netlify publishes the merged web commit through the established Git deployment. Release-channel proof belongs in the release handoff; these implementation requirements alone do not establish live status.
 
-Help reuses the contextual copy instead of duplicating it. Net `game.js` growth is 1,502 bytes; its individual allowance advances by 2 KiB while the total installation-cache ceiling remains unchanged at 3,648 KiB. No artwork, dependency, or additional runtime request is introduced.
+Help reuses the contextual copy instead of duplicating it. Net `game.js` growth is 1,517 bytes; its individual allowance advances by 2 KiB while the total installation-cache ceiling remains unchanged at 3,648 KiB. No artwork, dependency, or additional runtime request is introduced.
 
 Physical phone testing remains excluded at the user's request. Browser tests use isolated fixtures; production smoke tests remain signed out and do not consume real-player resources. Preferences do not synchronize across different browsers or devices.

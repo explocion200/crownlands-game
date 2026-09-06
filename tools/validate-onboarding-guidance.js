@@ -73,7 +73,27 @@ for (const holdSeconds of [600, 900, 1800, 3600, 2100]) {
   assert.match(session.getOnboardingCopy("camp", camp).text, new RegExp(`${holdSeconds / 60}m hold`));
   assert.match(session.getOnboardingCopy("camp", { ...camp, owner: "player" }).text, /Another ruler taking it restarts/);
 }
-assert.match(game, /if \(onlineFreshClaimCityId\) enableOnboardingGuidance\(\{ onlyIfNew: true \}\)/);
+// A fresh claim may redirect into a second, already-claimed admission. Exercise
+// the actual admission prefix so the tips cannot be lost before that return.
+const admissionStart = game.indexOf("      if (claim.currentUser) applyOnlineProfileSnapshot(claim.currentUser, state.playerName);");
+const admissionEnd = game.indexOf("      const claimedCity =", admissionStart);
+assert(admissionStart > 0 && admissionEnd > admissionStart);
+const admission = game.slice(admissionStart, admissionEnd);
+const admissionSession = createSession();
+Object.assign(admissionSession, {
+  uid: "redirected-new-ruler", realm: "current-realm", state: { online: {}, playerName: "Test" },
+  claim: { cityId: "new-home", islandId: "spawn-map", alreadyClaimed: false },
+  islandId: "requested-map", targetRegionId: "requested-map", profile: null,
+  allowWelcomeBack: false, announceLocation: false, onlineStatusDetail: {},
+  applyOnlineProfileSnapshot() {}, getRegionIdFromOnlineIslandId: id => id,
+  getRegionLabel: id => id, connectOnlineIsland: id => id,
+});
+assert.equal(vm.runInContext(`(function () { ${admission} })()`, admissionSession), "spawn-map");
+assert.equal(admissionSession.getOnboardingPrefs()?.enabled, true, "Starting-map redirection skipped automatic guidance.");
+admissionSession.saveOnboardingPrefs({ enabled: false, dismissed: ["upgrade"] });
+admissionSession.claim.alreadyClaimed = true;
+vm.runInContext(`(function () { ${admission} })()`, admissionSession);
+assert.equal(admissionSession.getOnboardingPrefs().enabled, false, "Admission replay overrode the ruler's dismissal.");
 assert.match(game, /orderKind === "attack" \? renderOnboardingTip/);
 assert.match(game, /renderOnboardingTip\("scout", city, "report"\)/);
 assert.match(game, /data-onboarding-scope/);

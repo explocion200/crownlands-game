@@ -16084,6 +16084,7 @@ async function connectOnlineIsland(regionId, {
         verifiedRealmInfo = { ...verifiedRealmInfo, realmShardId: REALM_SHARD_ID };
       }
       if (claim.currentUser) applyOnlineProfileSnapshot(claim.currentUser, state.playerName);
+      if (!claim.alreadyClaimed && claim.cityId) enableOnboardingGuidance({ onlyIfNew: true });
       const claimedRegionId = claim?.islandId ? getRegionIdFromOnlineIslandId(claim.islandId) : "";
       const redirectedRegionId = claimedRegionId && claimedRegionId !== targetRegionId ? claimedRegionId : "";
       const claimedIslandChanged = Boolean(claim?.islandId && claim.islandId !== islandId);
@@ -16113,7 +16114,6 @@ async function connectOnlineIsland(regionId, {
       state.online.mainCityId = claim?.cityId || state.online.mainCityId || state.mainCityId;
       if (claim?.cityId) state.mainCityId = claim.cityId;
       onlineFreshClaimCityId = !claim?.alreadyClaimed && claim?.cityId ? claim.cityId : "";
-      if (onlineFreshClaimCityId) enableOnboardingGuidance({ onlyIfNew: true });
       const claimedCity = claim?.cityId ? cityById(claim.cityId) : null;
       if (claimedCity) claimedCity.isMainCity = true;
       normalizeSingleMainCityAssignment(claim?.cityId || state.mainCityId, { markDirty: true });
