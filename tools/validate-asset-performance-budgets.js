@@ -52,7 +52,9 @@ const MAX_LOGIN_PRELOAD_BYTES = 2 * 1024 * 1024;
 // full offline shell bounded. Advance the allowance by one 16 KiB step.
 // Holding Tower controls and the two existing heraldry sprites used by Tower
 // ownership crests add under one bounded 128 KiB offline-shell step.
-const MAX_INSTALL_PRECACHE_BYTES = 3648 * 1024;
+// Identity guidance and control-position arrows add under 8 KiB, without new
+// assets, dependencies, network requests, or a continuously running animation.
+const MAX_INSTALL_PRECACHE_BYTES = 3656 * 1024;
 const MAX_OPTIMIZED_ART_BYTES = 2700 * 1024;
 const MAX_WORLD_MAP_BYTES = 750 * 1024;
 const MAX_WORLD_THUMBNAIL_TOTAL_BYTES = 500 * 1024;
@@ -91,7 +93,8 @@ const entrypointBudgets = {
   // movement composers add under one bounded 32 KiB runtime step.
   // Contextual first steps replace the old Help copy: net runtime growth is
   // under 2 KiB. The aggregate 3648 KiB offline-shell ceiling is unchanged.
-  "game.js": 1724 * 1024,
+  // The follow-up identity steps and arrows add under one 8 KiB runtime step.
+  "game.js": 1732 * 1024,
   "common-gear-ui.js": 64 * 1024,
   "base-cities.js": 32 * 1024,
   "instant-economy-actions.js": 64 * 1024,
@@ -99,7 +102,8 @@ const entrypointBudgets = {
   // under one bounded 4 KiB stylesheet step.
   // Map markers and the complete responsive Tower/Treasury panel add under one
   // bounded 16 KiB shared-style step.
-  "styles.css": 420 * 1024,
+  // Onboarding arrows and compact Profile guidance add under 2 KiB.
+  "styles.css": 422 * 1024,
   "holding-tower-ui.css": 24 * 1024,
   "holding-tower-ui.js": 24 * 1024,
   "common-gear-ui.css": 40 * 1024,

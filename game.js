@@ -2495,7 +2495,9 @@ const incomingAttackBtn = document.getElementById("incomingAttackBtn");
 const incomingAttackCount = document.getElementById("incomingAttackCount");
 const incomingAttackTime = document.getElementById("incomingAttackTime");
 const helpBtn = document.getElementById("helpBtn");
-const ONBOARDING_TOPICS = Object.freeze(["upgrade", "scout", "attack", "camp"]);
+const ONBOARDING_TOPICS = Object.freeze(["name", "flag", "upgrade", "scout", "attack"]);
+let onboardingFrame = 0;
+let onboardingSettleTimer = 0;
 let onboardingScope = "";
 let onboardingPrefs = null;
 const crownlandsAudio = window.CrownlandsAudio;
@@ -26210,6 +26212,7 @@ function renderFlagEditor() {
       updateFlagDraft({ symbol: buttonElement.dataset.flagSymbol });
     });
   });
+  scheduleOnboardingPointer();
 }
 
 function renderFlagSwatches(container, key) {
@@ -27116,6 +27119,7 @@ function renderSelectedCityWheel(city) {
   const regroupBusy = pendingBulkOrderAction?.kind === "regroup" && pendingBulkOrderAction.cityId === city.id;
   const bulkOrderBusy = Boolean(pendingBulkOrderAction);
   wheel.className = "city-action-wheel";
+  wheel.dataset.onboardingCity = city.id;
   wheel.style.left = `${mapPoint.x}px`;
   wheel.style.top = `${mapPoint.y}px`;
   wheel.innerHTML = `
@@ -27186,6 +27190,7 @@ function renderSelectedForeignWheel(city) {
   const attackBlockLabel = clanAlly ? "Reinforce" : mainCityBlockReason ? "Main City" : shieldBlockReason ? "Shielded" : "Attack";
   const canAttack = !mainCityBlockReason && !shieldBlockReason && playerCities().some(playerCity => playerCity.troops > 0);
   wheel.className = "city-action-wheel foreign-city-action-wheel";
+  wheel.dataset.onboardingCity = city.id;
   if (clanAlly) wheel.classList.add("clan-ally-action-wheel");
   wheel.style.left = `${mapPoint.x}px`;
   wheel.style.top = `${mapPoint.y}px`;
@@ -27909,7 +27914,6 @@ function showRewardCampInfoModal(campId) {
       </div>`;
   modalTitle.textContent = camp.name;
   modalBody.innerHTML = `
-    ${renderOnboardingTip("camp", camp)}
     <div class="gold-camp-info-panel">
       <div class="camp-info-tabs" role="tablist" aria-label="${escapeHtml(camp.name)} information">
         <button id="campStatsTab" class="camp-info-tab active" type="button" role="tab" aria-selected="true" aria-controls="campStatsPanel" data-camp-info-tab="stats">${isDeedCamp || isRelicCamp ? "Status" : "Stats"}</button>
@@ -29616,7 +29620,7 @@ function showTroopSliderModalWithRoute(source, target, route, options = {}) {
       ${isReinforcement && !campTarget && !isStronghold(target) ? `<div class="reinforcement-limit-note"><strong>${formatNumber(ordinaryCityReinforcementUsage)} / ${formatNumber(ORDINARY_CITY_REINFORCEMENT_CAPACITY)} reinforcement slots</strong><span>Ordinary cities reserve one slot per contributing clanmate when a march launches.</span></div>` : ""}
       ${rallyOrder ? `<div class="reinforcement-limit-note rally-limit-note"><strong>${CLAN_RALLY_MIN_PARTICIPANTS}–${CLAN_RALLY_MAX_PARTICIPANTS} participants</strong><span>${orderKind === "rally_create" ? "You will lead this manual-launch Rally. Launch stays blocked until every participant is Ready." : "Your troops march visibly to the assembly city and must arrive before launch."}</span></div>` : ""}
 
-      ${orderKind === "attack" ? renderOnboardingTip(campTarget ? "camp" : "attack", target, "order") : ""}
+      ${orderKind === "attack" && !campTarget ? renderOnboardingTip("attack", target, "order") : ""}
       <div class="troop-slider-control">
         <div class="troop-slider-readout">
           <span>Troops to ${rallyOrder ? "commit" : isTransfer || isReinforcement ? "send" : "attack with"}</span>
@@ -37553,6 +37557,14 @@ function enableOnboardingGuidance({ onlyIfNew = false } = {}) {
 }
 
 function getOnboardingCopy(topic, target = null, context = "map") {
+  if (topic === "name") return {
+    title: "Choose your ruler name",
+    text: context === "profile" ? "Tap the pencil beside your name. Enter up to 18 characters and use the check mark to save." : "Open your Profile using the portrait to change your ruler name. Use Got it when you are ready for the next tip.",
+  };
+  if (topic === "flag") return {
+    title: "Make your kingdom flag",
+    text: context === "editor" ? "Choose colors, a pattern, and a symbol. Tap Save Flag to keep your design; if saving fails, retry before leaving." : context === "profile" ? "Tap Edit flag to choose your colors, pattern, and symbol. Save Flag keeps your design." : "Open your Profile using the portrait, then tap Edit flag. Your name and flag identify your kingdom.",
+  };
   if (topic === "upgrade") {
     const ownedCity = target?.owner === "player" && !isStronghold(target) ? target : null;
     const cost = ownedCity ? getLevelCost(getProjectedCityForInstantActions(ownedCity)) : NaN;
@@ -37577,21 +37589,12 @@ function getOnboardingCopy(topic, target = null, context = "map") {
       ? { title: "Your first attack", text: "Choose troops with the slider. Check the forecast and travel time. Tap Attack to send; open Reports after arrival." }
       : { title: "Plan your first attack", text: "Select a neutral city and tap Attack. Scout to reveal defenders, then choose and confirm your army. Main Cities cannot be attacked." };
   }
-  if (topic === "camp") {
-    const config = target && isRewardCampTarget(target) ? getRewardCampConfig(target) : null;
-    if (!config) return { title: "Build toward a camp capture", text: "Find Camp badges in the map switcher. Open a camp's Info to check defenders, hold time, and today's rewards before attacking." };
-    const duration = formatDuration(config.holdSeconds);
-    const rewardTab = config.type === "deed" ? "Your Rewards" : "Reward";
-    return target.owner === "player"
-      ? { title: "Keep control until the timer ends", text: `You hold this camp. Defend it until its ${duration} hold ends. Another ruler taking it restarts the timer; check ${rewardTab} for daily limits.` }
-      : { title: "Capture, then hold", text: `Capture starts a ${duration} hold. Scout, defeat the defenders, and keep control until it ends. Check ${rewardTab} for today's allowance.` };
-  }
   return null;
 }
 
 function renderOnboardingTip(topic, target = null, context = "map") {
   const preferences = getOnboardingPrefs();
-  if (!preferences?.enabled || preferences.dismissed.includes(topic)) return "";
+  if (!preferences?.enabled || preferences.dismissed.includes(topic) || (target && isRewardCampTarget(target))) return "";
   const copy = getOnboardingCopy(topic, target, context);
   if (!copy) return "";
   return `<aside class="onboarding-tip" data-onboarding-topic="${topic}" data-onboarding-target="${escapeHtml(target?.id || "")}" data-onboarding-context="${context}" data-onboarding-scope="${escapeHtml(onboardingScope)}" aria-label="First steps guidance">
@@ -37611,9 +37614,11 @@ function renderOnboardingMapTip() {
     const source = selectedSourceId ? cityById(selectedSourceId) : null;
     const available = topic => !preferences.dismissed.includes(topic);
     let topic = ONBOARDING_TOPICS.find(available);
-    if (target && isRewardCampTarget(target)) topic = "camp";
-    else if (target && target.owner !== "player") topic = available("scout") ? "scout" : "attack";
-    else if (source && !isStronghold(source) && available("upgrade")) topic = "upgrade";
+    if (target && (isRewardCampTarget(target) || isStronghold(target) || target.isMainCity)) topic = null;
+    else if (topic !== "name" && topic !== "flag") {
+      if (target && target.owner !== "player") topic = available("scout") ? "scout" : "attack";
+      else if (source && !isStronghold(source) && available("upgrade")) topic = "upgrade";
+    }
     markup = topic ? renderOnboardingTip(topic, target || source) : "";
   }
   host.hidden = !markup;
@@ -37621,6 +37626,108 @@ function renderOnboardingMapTip() {
     host.innerHTML = markup;
     host.dataset.guidanceMarkup = markup;
   }
+  scheduleOnboardingPointer();
+}
+
+function scheduleOnboardingPointer() {
+  if (onboardingFrame) return;
+  if (!onboardingPrefs?.enabled && !document.getElementById("onboardingArrow")) return;
+  onboardingFrame = requestAnimationFrame(() => {
+    onboardingFrame = 0;
+    updateOnboardingPointer();
+  });
+}
+
+function settleOnboardingPointer() {
+  scheduleOnboardingPointer();
+  clearTimeout(onboardingSettleTimer);
+  onboardingSettleTimer = setTimeout(scheduleOnboardingPointer, 350);
+}
+
+function getOnboardingControl(tip) {
+  const topic = tip.dataset.onboardingTopic;
+  const context = tip.dataset.onboardingContext;
+  if (topic === "name" || topic === "flag") {
+    if (context === "map") return profileBtn;
+    if (topic === "name") return profileNameEditor.hidden ? profileNameEditBtn : cleanName(profileNameInput.value) !== state.playerName && cleanName(profileNameInput.value) ? profileNameSaveBtn : profileNameInput;
+    if (context !== "editor") return profileFlagBtn;
+    if (flagSaveInFlight) return null;
+    return isFlagEditorDirty() ? flagSaveBtn : [...flagEditorView.querySelectorAll(`[data-flag-editor-panel="${flagEditorSection}"] button:not(.active)`)].find(onboardingControlIsVisible);
+  }
+  const target = getArmyTargetById(tip.dataset.onboardingTarget);
+  if (target && (isRewardCampTarget(target) || isStronghold(target))) return null;
+  if (context === "info") return modalBody.querySelector('[data-city-upgrade-mode="exact"][data-city-upgrade-levels="1"]');
+  if (context === "order") return modalBody.querySelector("#troopAmountSlider");
+  if (context === "report") return closeModalBtn;
+  if (topic === "scout" && target) {
+    if (getPendingScoutMission(target.id) || pendingDirectScoutTargets.has(target.id)) return null;
+    if (getScoutReport(target.id)) return logBtn;
+  }
+  const city = topic === "upgrade" ? cityById(selectedSourceId) : target;
+  if (city && (topic === "upgrade" ? city.owner === "player" : city.owner === "neutral" && !city.isMainCity)) {
+    const wheel = cityLayer.querySelector(`.city-action-wheel[data-onboarding-city="${CSS.escape(city.id)}"]`);
+    const control = wheel?.querySelector(`.wheel-${topic === "upgrade" ? "level" : topic}`);
+    if (control) return control;
+  }
+  // Point only at a visible, eligible city on the active map; never at a Camp.
+  return [...cityLayer.querySelectorAll(".city-node[data-city-id]")].find(node => {
+    const candidate = cityById(node.dataset.cityId);
+    return candidate && !isStronghold(candidate) && (topic === "upgrade" ? candidate.owner === "player" : candidate.owner === "neutral" && !candidate.isMainCity) && onboardingControlIsVisible(node);
+  });
+}
+
+function onboardingControlIsVisible(control) {
+  if (!control?.isConnected || control.disabled || !control.getClientRects().length) return false;
+  const rect = control.getBoundingClientRect();
+  const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  return Boolean(hit && control.contains(hit));
+}
+
+function updateOnboardingPointer() {
+  const preferences = getOnboardingPrefs();
+  const host = document.getElementById("onboardingProfileTip");
+  const profileOpen = profileScreen?.classList.contains("open");
+  let topic = null;
+  if (profileOpen && preferences?.enabled) {
+    if (!flagEditorView.hidden) topic = "flag";
+    else if (!profileView.hidden) topic = ["name", "flag"].find(item => !preferences.dismissed.includes(item));
+  }
+  const markup = topic ? renderOnboardingTip(topic, null, flagEditorView.hidden ? "profile" : "editor") : "";
+  if (host) {
+    host.hidden = !markup;
+    if (host.dataset.guidanceMarkup !== markup || (markup && !host.firstElementChild)) {
+      host.innerHTML = markup;
+      host.dataset.guidanceMarkup = markup;
+    }
+  }
+  let arrow = document.getElementById("onboardingArrow");
+  if (arrow) arrow.style.display = "none";
+  if (!preferences?.enabled) { arrow?.remove(); return; }
+  if (document.hidden) return;
+  const root = modal.open ? modal : document.body;
+  const tip = (modal.open ? modalBody : profileOpen ? host : document.getElementById("onboardingMapTip"))?.querySelector(".onboarding-tip");
+  if (!tip || tip.dataset.onboardingScope !== getOnlineRequestScope() || !tip.getClientRects().length || getComputedStyle(tip).visibility === "hidden") return;
+  const control = getOnboardingControl(tip);
+  if (!onboardingControlIsVisible(control)) return;
+  if (!arrow) {
+    arrow = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    arrow.id = "onboardingArrow";
+    arrow.setAttribute("aria-hidden", "true");
+    arrow.innerHTML = '<path class="onboarding-arrow-outline"/><path class="onboarding-arrow-line"/>';
+  }
+  if (arrow.parentElement !== root) root.append(arrow);
+  arrow.style.display = "block";
+  const rect = control.getBoundingClientRect();
+  const bounds = arrow.getBoundingClientRect();
+  const scaleX = bounds.width / arrow.clientWidth;
+  const scaleY = bounds.height / arrow.clientHeight;
+  const x = (rect.x + rect.width / 2 - bounds.x) / scaleX;
+  const fromBelow = rect.top - bounds.top < 48;
+  const y = ((fromBelow ? rect.bottom : rect.top) - bounds.y) / scaleY;
+  const sign = fromBelow ? 1 : -1;
+  const line = `M ${x + 24} ${y + sign * 40} Q ${x} ${y + sign * 40} ${x} ${y + sign * 5} M ${x - 7} ${y + sign * 15} L ${x} ${y + sign * 5} L ${x + 7} ${y + sign * 15}`;
+  arrow.querySelectorAll("path").forEach(path => path.setAttribute("d", line));
+  arrow.dataset.control = control.id || control.classList.value;
 }
 
 function refreshOnboardingModalTip() {
@@ -37654,7 +37761,7 @@ function handleOnboardingGuidanceClick(event) {
     enableOnboardingGuidance();
     modal.close();
     closeProfileScreen();
-    showToast("Tips are on. Select a city or camp.");
+    showToast("Tips are on. Start with your Profile.");
   } else {
     const preferences = getOnboardingPrefs();
     if (!preferences) return;
@@ -37669,7 +37776,8 @@ function handleOnboardingGuidanceClick(event) {
   const host = document.getElementById("onboardingMapTip");
   if (host) delete host.dataset.guidanceMarkup;
   renderOnboardingMapTip();
-  if (!modal.open) (host?.querySelector("button") || logBtn)?.focus();
+  updateOnboardingPointer();
+  if (!modal.open) (profileScreen?.classList.contains("open") ? document.querySelector("#onboardingProfileTip button") || profileCloseBtn : host?.querySelector("button") || logBtn)?.focus();
 }
 
 function showHelpModal() {
@@ -38070,6 +38178,7 @@ function applyCameraTransform() {
   const offset = getMapViewportOffset(rect, dimensions);
   mapWorld.style.transform = `translate3d(${offset.x - camera.x * zoom}px, ${offset.y - camera.y * zoom}px, 0) scale(${zoom})`;
   updateMainCityReturnButtonForCamera(rect);
+  scheduleOnboardingPointer();
 }
 
 function updateCameraTransform() {
@@ -39178,6 +39287,18 @@ if (inventoryBtn) inventoryBtn.addEventListener("click", showInventoryModal);
 if (cityListBtn) cityListBtn.addEventListener("click", showCityListModal);
 if (helpBtn) helpBtn.addEventListener("click", showHelpModal);
 document.addEventListener("click", handleOnboardingGuidanceClick);
+document.addEventListener("click", settleOnboardingPointer);
+document.addEventListener("input", scheduleOnboardingPointer);
+document.addEventListener("scroll", scheduleOnboardingPointer, { capture: true, passive: true });
+document.addEventListener("close", scheduleOnboardingPointer, true);
+for (const eventName of ["transitionend", "animationend"]) document.addEventListener(eventName, event => {
+  if (event.target.closest?.(".profile-screen, dialog")) scheduleOnboardingPointer();
+}, true);
+window.addEventListener("resize", settleOnboardingPointer);
+document.addEventListener("visibilitychange", scheduleOnboardingPointer);
+const onboardingPanelObserver = new MutationObserver(settleOnboardingPointer);
+onboardingPanelObserver.observe(modal, { attributes: true, attributeFilter: ["open"] });
+onboardingPanelObserver.observe(profileScreen, { attributes: true, attributeFilter: ["class"] });
 window.addEventListener("storage", event => {
   if (event.key === null || event.key === `crownlands-first-steps-v1:${onboardingScope}`) {
     onboardingScope = "";

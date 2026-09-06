@@ -1,9 +1,9 @@
 # Crownlands Master Development Specification
 
-**Version:** 1.36
-**Effective date:** September 5, 2026
+**Version:** 1.37
+**Effective date:** September 6, 2026
 **Document status:** Authoritative baseline with implementation and release verification
-**Evidence reviewed through:** September 5, 2026
+**Evidence reviewed through:** September 6, 2026
 
 > [!IMPORTANT]
 > This specification is the authority for intended Crownlands behavior and confirmed design decisions. The current Git repository and backend are the authority for current technical implementation. A verified production build is the authority for what players can actually use in that release channel. These states must never be silently conflated.
@@ -960,10 +960,11 @@ Implementation and controlled evidence: [Server response and connection reliabil
 
 ### Contextual first steps
 
-- New starting-city claims enable short, dismissible guidance for the first city upgrade, scout, attack, and Camp capture. Existing players may enable or replay it through Profile → Settings → First steps & help.
-- Guidance appears beside the relevant map selection or action dialog. It explains the upgrade cost and production benefit, one-troop scouting and Reports, the attack confirmation and arrival result, and Camp capture followed by the configured hold timer and daily reward allowance.
+- New starting-city claims enable short, dismissible guidance for editing the ruler name and kingdom flag, then the first city upgrade, scout, and city attack. Existing players may enable or replay it through Profile → Settings → First steps & help. Camp attacks and capture are excluded from beginner guidance because new rulers lack the troops for them; normal Camp gameplay and information remain available.
+- Guidance appears beside the relevant Profile controls, map selection, or action dialog. It explains the existing name and flag editors, upgrade cost and production benefit, one-troop scouting and Reports, and the city attack confirmation and arrival result. Name and flag saves retain their existing confirmation, persistence, and unsaved-change behavior.
+- Arrows point at the actual visible controls, following panel, scroll, resize, and camera changes. They do not intercept input, point at disabled or obscured controls, or submit actions. Profile editing guidance begins with the portrait; name editing uses the pencil, name field, and save check mark; flag editing uses customization choices and Save Flag.
 - Tips are optional reading aids. “Got it” dismisses a topic; it does not claim that an action succeeded. “Hide tips” hides all guidance. These preferences are local to the browser, account, and realm, survive reload where browser storage is available, and never gate or submit gameplay actions.
-- Copy uses existing costs, report lifetime, and Camp configuration. Guidance preserves server authority, balance, hidden intelligence, action blockers, and the compact travel section. Implementation and release verification are recorded in `docs/CONTEXTUAL_NEW_PLAYER_ONBOARDING.md`.
+- Copy uses existing costs and report lifetime. Guidance preserves server authority, balance, hidden intelligence, action blockers, and the compact travel section. Existing opt-outs survive the addition of name and flag topics. Implementation and release verification are recorded in `docs/CONTEXTUAL_NEW_PLAYER_ONBOARDING.md`.
 
 ### Current presentation status
 
@@ -1310,6 +1311,11 @@ These remain `PROPOSED` or roadmap-level `PLANNED` directions. Their detailed me
 | Crownlands Work conversations and Codex completion reports | Design and implementation history | Decisions used only when confirmed; reports do not prove deployment |
 
 # Appendix D — Change Log
+
+## v1.37 — September 6, 2026
+
+- Removed Camp attacks and capture from beginner guidance at the user's direction; new rulers do not have the troops for these objectives.
+- Added contextual ruler-name and kingdom-flag editing steps and arrows at visible, usable controls. Guidance keeps action submission and save confirmation under the player's control.
 
 ## v1.36 — September 5, 2026
 

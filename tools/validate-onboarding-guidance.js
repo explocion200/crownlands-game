@@ -27,7 +27,8 @@ function createSession() {
     pendingDirectScoutTargets: new Set(),
     escapeHtml: value => String(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;"),
   });
-  vm.runInContext(`const ONBOARDING_TOPICS = ["upgrade", "scout", "attack", "camp"]; let onboardingScope = ""; let onboardingPrefs = null; ${source}`, context);
+  const topics = game.match(/const ONBOARDING_TOPICS = Object.freeze\((\[[^;]+\])\);/)[1];
+  vm.runInContext(`const ONBOARDING_TOPICS = ${topics}; let onboardingScope = ""; let onboardingPrefs = null; ${source}`, context);
   return context;
 }
 let session = createSession();
@@ -68,11 +69,15 @@ session.report = {};
 assert.match(session.getOnboardingCopy("scout", { id: "city" }).title, /ready/);
 assert.match(session.getOnboardingCopy("scout", {}, "report").text, /10 minutes.*defenders can change/);
 assert.match(session.getOnboardingCopy("attack", {}, "order").text, /slider.*Tap Attack to send.*arrival/);
-for (const holdSeconds of [600, 900, 1800, 3600, 2100]) {
-  const camp = { camp: true, holdSeconds, owner: "neutral" };
-  assert.match(session.getOnboardingCopy("camp", camp).text, new RegExp(`${holdSeconds / 60}m hold`));
-  assert.match(session.getOnboardingCopy("camp", { ...camp, owner: "player" }).text, /Another ruler taking it restarts/);
-}
+assert.equal(session.getOnboardingCopy("camp"), null);
+for (const topic of ["scout", "attack", "camp"]) assert.equal(session.renderOnboardingTip(topic, { camp: true }), "", "Camp guidance must not encourage a beginner attack.");
+assert.match(session.getOnboardingCopy("name", null, "profile").text, /18 characters.*check mark/);
+assert.match(session.getOnboardingCopy("flag", null, "editor").text, /colors, a pattern, and a symbol.*Save Flag.*retry/);
+session.uid = "legacy-guidance";
+session.window.localStorage = { getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value) };
+storage.set(`crownlands-first-steps-v1:${session.getOnlineRequestScope()}`, JSON.stringify({ enabled: false, dismissed: ["camp", "upgrade"] }));
+assert.equal(session.getOnboardingPrefs().enabled, false, "Adding identity tips must preserve an existing opt-out.");
+assert.deepEqual(Array.from(session.getOnboardingPrefs().dismissed), ["upgrade"]);
 // A fresh claim may redirect into a second, already-claimed admission. Exercise
 // the actual admission prefix so the tips cannot be lost before that return.
 const admissionStart = game.indexOf("      if (claim.currentUser) applyOnlineProfileSnapshot(claim.currentUser, state.playerName);");
@@ -94,7 +99,7 @@ admissionSession.saveOnboardingPrefs({ enabled: false, dismissed: ["upgrade"] })
 admissionSession.claim.alreadyClaimed = true;
 vm.runInContext(`(function () { ${admission} })()`, admissionSession);
 assert.equal(admissionSession.getOnboardingPrefs().enabled, false, "Admission replay overrode the ruler's dismissal.");
-assert.match(game, /orderKind === "attack" \? renderOnboardingTip/);
+assert.match(game, /orderKind === "attack" && !campTarget \? renderOnboardingTip/);
 assert.match(game, /renderOnboardingTip\("scout", city, "report"\)/);
 assert.match(game, /data-onboarding-scope/);
 assert.match(fs.readFileSync(path.join(root, "index.html"), "utf8"), /id="helpBtn"/);
