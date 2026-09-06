@@ -14786,7 +14786,6 @@ html.holding-tower-qa .modal::backdrop { background: rgba(2,6,8,.82); backdrop-f
   border-radius: 6px;
   color: var(--cl-ink);
   background: var(--cl-parchment);
-  font-family: inherit;
   text-align: left;
 }
 .onboarding-tip-copy { flex: 1; min-width: 0; }
@@ -14814,10 +14813,7 @@ html.holding-tower-qa .modal::backdrop { background: rgba(2,6,8,.82); backdrop-f
 .onboarding-map-tip { position: absolute; z-index: 45; right: 84px; top: 10px; width: min(490px, calc(100% - 420px)); }
 .onboarding-map-tip .onboarding-tip { margin: 0; box-shadow: 0 3px 12px #0006; }
 .onboarding-map-tip[hidden],
-body:has(dialog[open]) .onboarding-map-tip,
-body:has(.profile-screen.open) .onboarding-map-tip,
-body:has(.toast.visible) .onboarding-map-tip,
-body:has(.setup-screen.visible) .onboarding-map-tip { display: none; }
+body:has(dialog[open], .profile-screen.open, .toast.visible, .setup-screen.visible) .onboarding-map-tip { display: none; }
 @media (max-height: 500px) and (orientation: landscape) {
   .onboarding-tip { gap: 8px; padding: 8px 10px; }
   .onboarding-tip-copy strong { font-size: 13px; }
