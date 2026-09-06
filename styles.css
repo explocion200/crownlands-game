@@ -14775,7 +14775,7 @@ html.holding-tower-qa .modal::backdrop { background: rgba(2,6,8,.82); backdrop-f
   .clan-treasury-ledger { margin: .35rem 0; }
 }
 
-/* Contextual first steps use the established parchment palette and font. */
+/* Contextual first steps. */
 .onboarding-tip {
   display: flex;
   align-items: center;
@@ -14818,8 +14818,6 @@ body:has(dialog[open]) .onboarding-map-tip,
 body:has(.profile-screen.open) .onboarding-map-tip,
 body:has(.toast.visible) .onboarding-map-tip,
 body:has(.setup-screen.visible) .onboarding-map-tip { display: none; }
-.onboarding-help { margin-bottom: 16px; }
-.onboarding-help small { display: block; margin-top: 8px; }
 @media (max-height: 500px) and (orientation: landscape) {
   .onboarding-tip { gap: 8px; padding: 8px 10px; }
   .onboarding-tip-copy strong { font-size: 13px; }

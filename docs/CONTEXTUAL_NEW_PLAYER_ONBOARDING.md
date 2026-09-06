@@ -19,4 +19,6 @@ The formerly disconnected Help entry is now available in Settings. Its long prot
 
 Both checks are part of the static release gate. The complete repository gate, production build, required GitHub checks, and combined diff review must pass before merge. This is a client-only release: no Functions source, Firestore rules, indexes, world migration, cleanup job, or production-data change is required. Netlify publishes the merged web commit through the established Git deployment. Release-channel proof belongs in the release handoff; these implementation requirements alone do not establish live status.
 
+Help reuses the contextual copy instead of duplicating it. Net `game.js` growth is 1,502 bytes; its individual allowance advances by 2 KiB while the total installation-cache ceiling remains unchanged at 3,648 KiB. No artwork, dependency, or additional runtime request is introduced.
+
 Physical phone testing remains excluded at the user's request. Browser tests use isolated fixtures; production smoke tests remain signed out and do not consume real-player resources. Preferences do not synchronize across different browsers or devices.

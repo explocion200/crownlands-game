@@ -2496,8 +2496,8 @@ const incomingAttackCount = document.getElementById("incomingAttackCount");
 const incomingAttackTime = document.getElementById("incomingAttackTime");
 const helpBtn = document.getElementById("helpBtn");
 const ONBOARDING_TOPICS = Object.freeze(["upgrade", "scout", "attack", "camp"]);
-let onboardingPreferenceScope = "";
-let onboardingPreferences = null;
+let onboardingScope = "";
+let onboardingPrefs = null;
 const crownlandsAudio = window.CrownlandsAudio;
 const crownlandsAnimations = window.CrownlandsAnimations;
 const BATTLE_IMPACT_AUDIO_DELAY_MS = 150;
@@ -37522,35 +37522,34 @@ function getBattleReportSummary(report) {
   return `${formatNumber(report.defendersLeft)} defenders remained.`;
 }
 
-// First-action guidance is a local UI preference, never a gameplay prerequisite.
-function getOnboardingPreferences() {
+function getOnboardingPrefs() {
   const scope = getCurrentOnlineUid() ? getOnlineRequestScope() : "";
-  if (scope === onboardingPreferenceScope) return onboardingPreferences;
-  onboardingPreferenceScope = scope;
-  onboardingPreferences = null;
+  if (scope === onboardingScope) return onboardingPrefs;
+  onboardingScope = scope;
+  onboardingPrefs = null;
   if (!scope) return null;
   try {
     const raw = JSON.parse(window.localStorage.getItem(`crownlands-first-steps-v1:${scope}`));
     if (raw && typeof raw.enabled === "boolean" && Array.isArray(raw.dismissed)) {
-      onboardingPreferences = { enabled: raw.enabled, dismissed: ONBOARDING_TOPICS.filter(topic => raw.dismissed.includes(topic)) };
+      onboardingPrefs = { enabled: raw.enabled, dismissed: ONBOARDING_TOPICS.filter(topic => raw.dismissed.includes(topic)) };
     }
-  } catch (_error) { /* Storage restrictions must not interrupt play. */ }
-  return onboardingPreferences;
+  } catch (_error) { /* Storage is optional. */ }
+  return onboardingPrefs;
 }
 
-function saveOnboardingPreferences(preferences) {
+function saveOnboardingPrefs(preferences) {
   if (!getCurrentOnlineUid()) return false;
-  getOnboardingPreferences();
-  onboardingPreferences = preferences;
+  getOnboardingPrefs();
+  onboardingPrefs = preferences;
   try {
-    window.localStorage.setItem(`crownlands-first-steps-v1:${onboardingPreferenceScope}`, JSON.stringify(preferences));
-  } catch (_error) { /* Keep the preference for this session if storage is unavailable. */ }
+    window.localStorage.setItem(`crownlands-first-steps-v1:${onboardingScope}`, JSON.stringify(preferences));
+  } catch (_error) { /* Retain the session preference. */ }
   return true;
 }
 
 function enableOnboardingGuidance({ onlyIfNew = false } = {}) {
-  if (onlyIfNew && getOnboardingPreferences()) return;
-  saveOnboardingPreferences({ enabled: true, dismissed: [] });
+  if (onlyIfNew && getOnboardingPrefs()) return;
+  saveOnboardingPrefs({ enabled: true, dismissed: [] });
 }
 
 function getOnboardingCopy(topic, target = null, context = "map") {
@@ -37561,41 +37560,41 @@ function getOnboardingCopy(topic, target = null, context = "map") {
     const detail = ownedCity && cityHasIncomingUpgradeBlocker(ownedCity)
       ? "An incoming attack blocks upgrades until it resolves."
       : Number.isFinite(cost) && getProjectedGold() < cost
-        ? `The next level costs ${formatNumber(cost)} Gold. Your cities produce Gold over time.`
-        : Number.isFinite(cost) ? `The next level costs ${formatNumber(cost)} Gold.` : "The button shows the Gold cost.";
-    return { title: "Your first city upgrade", text: `${action} to increase Gold and troop production. ${detail}` };
+        ? `Costs ${formatNumber(cost)} Gold. Let your cities produce more Gold.`
+        : Number.isFinite(cost) ? `Costs ${formatNumber(cost)} Gold.` : "Check the button's Gold cost.";
+    return { title: "Your first city upgrade", text: `${action} to boost Gold and troop production. ${detail}` };
   }
   if (topic === "scout") {
-    if (context === "report") return { title: "Read your scout report", text: `Compare the reported defense with your attack forecast. Intelligence lasts ${formatNumber(SCOUT_REPORT_SECONDS / 60)} minutes; defenders can change after the report.` };
+    if (context === "report") return { title: "Read your scout report", text: `Intelligence lasts ${formatNumber(SCOUT_REPORT_SECONDS / 60)} minutes; defenders can change. Compare this snapshot with your attack forecast.` };
     if (target && (getPendingScoutMission(target.id) || pendingDirectScoutTargets.has(target.id))) {
-      return { title: "Your scout is on its way", text: "Wait for the march to arrive, then open Reports. You can explore other maps while it travels." };
+      return { title: "Your scout is on its way", text: "Open Reports after arrival. You can explore other maps while the scout travels." };
     }
-    if (target && getScoutReport(target.id)) return { title: "Your scout report is ready", text: "Open Reports to inspect the defenders before choosing an army. Scouting gives a snapshot, not a guaranteed battle result." };
-    return { title: "Scout before you march", text: "Select a neutral city and tap Scout. One troop travels from an eligible nearby holding; the completed report appears in Reports." };
+    if (target && getScoutReport(target.id)) return { title: "Your scout report is ready", text: "Open Reports to inspect this snapshot before choosing your army. Defenders may change." };
+    return { title: "Scout before you march", text: "Select a neutral city and tap Scout. One troop travels to it; open Reports after arrival." };
   }
   if (topic === "attack") {
     return context === "order"
-      ? { title: "Your first attack", text: "Choose troops with the slider, then review the battle forecast and travel time. Tap Attack to send; the battle happens on arrival and its result appears in Reports." }
-      : { title: "Plan your first attack", text: "Select a neutral city and tap Attack. Scouting reveals its defenders; choose your army in the confirmation dialog. Main Cities cannot be attacked." };
+      ? { title: "Your first attack", text: "Choose troops with the slider. Check the forecast and travel time. Tap Attack to send; open Reports after arrival." }
+      : { title: "Plan your first attack", text: "Select a neutral city and tap Attack. Scout to reveal defenders, then choose and confirm your army. Main Cities cannot be attacked." };
   }
   if (topic === "camp") {
     const config = target && isRewardCampTarget(target) ? getRewardCampConfig(target) : null;
-    if (!config) return { title: "Build toward a camp capture", text: "Camps are tougher objectives. Use the map's Camp badges to find one, then open its Info to check defenders, hold time, and today's rewards before attacking." };
+    if (!config) return { title: "Build toward a camp capture", text: "Find Camp badges in the map switcher. Open a camp's Info to check defenders, hold time, and today's rewards before attacking." };
     const duration = formatDuration(config.holdSeconds);
     const rewardTab = config.type === "deed" ? "Your Rewards" : "Reward";
     return target.owner === "player"
-      ? { title: "Keep control until the timer ends", text: `You hold this camp. Keep it through its ${duration} hold to earn an eligible reward. Another ruler taking it restarts the timer; check ${rewardTab} for daily limits.` }
-      : { title: "Capture, then hold", text: `Scout this camp and build an army strong enough to defeat its defenders. Capture starts a ${duration} hold; keep control until it ends. Check ${rewardTab} for today's allowance.` };
+      ? { title: "Keep control until the timer ends", text: `You hold this camp. Defend it until its ${duration} hold ends. Another ruler taking it restarts the timer; check ${rewardTab} for daily limits.` }
+      : { title: "Capture, then hold", text: `Capture starts a ${duration} hold. Scout, defeat the defenders, and keep control until it ends. Check ${rewardTab} for today's allowance.` };
   }
   return null;
 }
 
 function renderOnboardingTip(topic, target = null, context = "map") {
-  const preferences = getOnboardingPreferences();
+  const preferences = getOnboardingPrefs();
   if (!preferences?.enabled || preferences.dismissed.includes(topic)) return "";
   const copy = getOnboardingCopy(topic, target, context);
   if (!copy) return "";
-  return `<aside class="onboarding-tip" data-onboarding-topic="${topic}" data-onboarding-target="${escapeHtml(target?.id || "")}" data-onboarding-context="${context}" data-onboarding-scope="${escapeHtml(onboardingPreferenceScope)}" aria-label="First steps guidance">
+  return `<aside class="onboarding-tip" data-onboarding-topic="${topic}" data-onboarding-target="${escapeHtml(target?.id || "")}" data-onboarding-context="${context}" data-onboarding-scope="${escapeHtml(onboardingScope)}" aria-label="First steps guidance">
     <div class="onboarding-tip-copy"><strong>${escapeHtml(copy.title)}</strong><p>${escapeHtml(copy.text)}</p></div>
     <div class="onboarding-tip-actions"><button type="button" data-onboarding-dismiss="${topic}" aria-label="Dismiss ${escapeHtml(copy.title)} tip">Got it</button><button type="button" data-onboarding-hide aria-label="Turn off first steps guidance">Hide tips</button></div>
   </aside>`;
@@ -37605,7 +37604,7 @@ function renderOnboardingMapTip() {
   refreshOnboardingModalTip();
   const host = document.getElementById("onboardingMapTip");
   if (!host) return;
-  const preferences = getOnboardingPreferences();
+  const preferences = getOnboardingPrefs();
   let markup = "";
   if (state && isOnlineWorldActive() && preferences?.enabled && !sendMode) {
     const target = selectedTargetId ? getArmyTargetById(selectedTargetId) : null;
@@ -37628,7 +37627,7 @@ function refreshOnboardingModalTip() {
   if (!modal?.open) return;
   const tip = modalBody.querySelector(".onboarding-tip");
   if (!tip) return;
-  const preferences = getOnboardingPreferences();
+  const preferences = getOnboardingPrefs();
   const topic = tip.dataset.onboardingTopic;
   if (!preferences?.enabled || preferences.dismissed.includes(topic) || tip.dataset.onboardingScope !== getOnlineRequestScope()) {
     tip.remove();
@@ -37655,12 +37654,12 @@ function handleOnboardingGuidanceClick(event) {
     enableOnboardingGuidance();
     modal.close();
     closeProfileScreen();
-    showToast("First steps tips are on. Select a city or camp to see its guidance.");
+    showToast("Tips are on. Select a city or camp.");
   } else {
-    const preferences = getOnboardingPreferences();
+    const preferences = getOnboardingPrefs();
     if (!preferences) return;
     const topic = button.dataset.onboardingDismiss;
-    saveOnboardingPreferences({ enabled: !button.hasAttribute("data-onboarding-hide"), dismissed: ONBOARDING_TOPICS.filter(item => preferences.dismissed.includes(item) || item === topic) });
+    saveOnboardingPrefs({ enabled: !button.hasAttribute("data-onboarding-hide"), dismissed: ONBOARDING_TOPICS.filter(item => preferences.dismissed.includes(item) || item === topic) });
     const nextFocus = card?.nextElementSibling?.querySelector("button:not([disabled]), input:not([disabled])") || closeModalBtn;
     document.querySelectorAll(".onboarding-tip").forEach(tip => {
       if (button.hasAttribute("data-onboarding-hide") || tip.dataset.onboardingTopic === topic) tip.remove();
@@ -37678,17 +37677,15 @@ function showHelpModal() {
   modalTitle.textContent = "First steps & help";
   modalBody.innerHTML = `
     <section class="onboarding-help">
-      <p>Build your kingdom at your own pace. These tips follow the city or camp you select.</p>
       <button type="button" data-onboarding-enable>Show first steps tips</button>
-      <small>Dismiss any tip with Got it, or choose Hide tips. Preferences are saved on this browser for your account and realm.</small>
     </section>
     <ol class="onboarding-help-steps">
-      <li><strong>Upgrade a city.</strong> Select your own city and tap Level, or open Info and use +1. Check the Gold cost; upgrades increase Gold and troop production.</li>
-      <li><strong>Scout a target.</strong> Select a neutral city and tap Scout to send one troop. Open Reports after arrival. Intelligence lasts ${formatNumber(SCOUT_REPORT_SECONDS / 60)} minutes and defenders may change.</li>
-      <li><strong>Plan an attack.</strong> Select a target and tap Attack. Choose your troops, review the forecast and travel time, then confirm. The battle resolves on arrival; check Reports for its outcome.</li>
-      <li><strong>Capture a camp.</strong> Build a stronger army, find a Camp badge in the map switcher, and inspect the camp. Defeat its defenders, then hold it for the displayed timer. Check its Reward tab for your daily allowance.</li>
+      ${ONBOARDING_TOPICS.map(topic => {
+        const copy = getOnboardingCopy(topic);
+        return `<li><strong>${escapeHtml(copy.title)}.</strong> ${escapeHtml(copy.text)}</li>`;
+      }).join("")}
     </ol>
-    <p>Drag empty land to move the map. Use the mouse wheel or pinch to zoom. Tap empty land to deselect. Guidance never pauses the realm.</p>
+    <p>Drag to move the map. Scroll or pinch to zoom. Tap empty land to deselect. The realm keeps running.</p>
   `;
   modal.showModal();
 }
@@ -39182,9 +39179,9 @@ if (cityListBtn) cityListBtn.addEventListener("click", showCityListModal);
 if (helpBtn) helpBtn.addEventListener("click", showHelpModal);
 document.addEventListener("click", handleOnboardingGuidanceClick);
 window.addEventListener("storage", event => {
-  if (event.key === null || event.key === `crownlands-first-steps-v1:${onboardingPreferenceScope}`) {
-    onboardingPreferenceScope = "";
-    onboardingPreferences = null;
+  if (event.key === null || event.key === `crownlands-first-steps-v1:${onboardingScope}`) {
+    onboardingScope = "";
+    onboardingPrefs = null;
     document.querySelectorAll(".onboarding-tip").forEach(tip => tip.remove());
     const host = document.getElementById("onboardingMapTip");
     if (host) delete host.dataset.guidanceMarkup;

@@ -5,8 +5,8 @@ const path = require("node:path");
 const vm = require("node:vm");
 const root = path.resolve(__dirname, "..");
 const game = fs.readFileSync(path.join(root, "game.js"), "utf8");
-const source = game.slice(game.indexOf("function getOnboardingPreferences("), game.indexOf("function showHelpModal("));
-assert(source.startsWith("function getOnboardingPreferences("));
+const source = game.slice(game.indexOf("function getOnboardingPrefs("), game.indexOf("function showHelpModal("));
+assert(source.startsWith("function getOnboardingPrefs("));
 const storage = new Map();
 function createSession() {
   const context = vm.createContext({
@@ -27,33 +27,33 @@ function createSession() {
     pendingDirectScoutTargets: new Set(),
     escapeHtml: value => String(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;"),
   });
-  vm.runInContext(`const ONBOARDING_TOPICS = ["upgrade", "scout", "attack", "camp"]; let onboardingPreferenceScope = ""; let onboardingPreferences = null; ${source}`, context);
+  vm.runInContext(`const ONBOARDING_TOPICS = ["upgrade", "scout", "attack", "camp"]; let onboardingScope = ""; let onboardingPrefs = null; ${source}`, context);
   return context;
 }
 let session = createSession();
-assert.equal(session.getOnboardingPreferences(), null, "Existing accounts must not be opted in automatically.");
+assert.equal(session.getOnboardingPrefs(), null, "Existing accounts must not be opted in automatically.");
 assert.equal(session.renderOnboardingTip("upgrade"), "");
 session.enableOnboardingGuidance({ onlyIfNew: true });
 assert.match(session.renderOnboardingTip("upgrade"), /Your first city upgrade/);
-session.saveOnboardingPreferences({ enabled: true, dismissed: ["upgrade"] });
+session.saveOnboardingPrefs({ enabled: true, dismissed: ["upgrade"] });
 assert.equal(session.renderOnboardingTip("upgrade"), "");
 session = createSession();
 assert.equal(session.renderOnboardingTip("upgrade"), "", "A dismissed tip returned after reload.");
 assert.match(session.renderOnboardingTip("scout"), /One troop/);
-session.saveOnboardingPreferences({ enabled: false, dismissed: [] });
+session.saveOnboardingPrefs({ enabled: false, dismissed: [] });
 session.enableOnboardingGuidance({ onlyIfNew: true });
 assert.equal(session.renderOnboardingTip("scout"), "", "Admission replay re-enabled dismissed guidance.");
 session.uid = "ruler-b";
-assert.equal(session.getOnboardingPreferences(), null, "Preferences leaked between accounts.");
+assert.equal(session.getOnboardingPrefs(), null, "Preferences leaked between accounts.");
 session.uid = "ruler-a";
 session.realm = "world-b:reset-b:shard-b";
-assert.equal(session.getOnboardingPreferences(), null, "Preferences leaked between realms.");
+assert.equal(session.getOnboardingPrefs(), null, "Preferences leaked between realms.");
 session.realm = "world-a:reset-a:shard-a";
 session.enableOnboardingGuidance();
 assert.match(session.renderOnboardingTip("upgrade"), /Your first city upgrade/, "Explicit replay did not restore the tips.");
 session.uid = "";
 assert.equal(session.renderOnboardingTip("upgrade"), "", "Signed-out clients exposed the previous ruler's guidance.");
-assert.equal(session.saveOnboardingPreferences({ enabled: true, dismissed: [] }), false);
+assert.equal(session.saveOnboardingPrefs({ enabled: true, dismissed: [] }), false);
 session.uid = "storage-unavailable";
 session.window.localStorage = { getItem() { throw Error("denied"); }, setItem() { throw Error("denied"); } };
 assert.doesNotThrow(() => session.enableOnboardingGuidance());

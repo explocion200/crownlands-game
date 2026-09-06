@@ -95,7 +95,7 @@ async function main() {
       await evaluate("modalBody.querySelector('[data-onboarding-hide]').click();modal.close();showProfileSettings();document.getElementById('helpBtn').click()");
       assert.equal(await evaluate("modalTitle.textContent"), "First steps & help");
       await evaluate("modalBody.querySelector('[data-onboarding-enable]').click()");
-      assert.equal(await evaluate("getOnboardingPreferences().enabled && getOnboardingPreferences().dismissed.length===0 && !modal.open"), true);
+      assert.equal(await evaluate("getOnboardingPrefs().enabled && getOnboardingPrefs().dismissed.length===0 && !modal.open"), true);
       results.push({ viewport: viewport.name, stableFocus: stable, layout, firstSteps: ["upgrade", "scout", "attack", "camp"], dismissalAndReplay: true });
       console.log(JSON.stringify(results.at(-1)));
     }
