@@ -89,7 +89,9 @@ const entrypointBudgets = {
   // Timed Core activation and live New Lands discovery add a bounded client control path.
   // Holding Tower map interaction, automatic scouting, Treasury controls, and
   // movement composers add under one bounded 32 KiB runtime step.
-  "game.js": 1722 * 1024,
+  // Contextual first steps replace the old Help copy: net runtime growth is
+  // under 2 KiB. The aggregate 3648 KiB offline-shell ceiling is unchanged.
+  "game.js": 1724 * 1024,
   "common-gear-ui.js": 64 * 1024,
   "base-cities.js": 32 * 1024,
   "instant-economy-actions.js": 64 * 1024,

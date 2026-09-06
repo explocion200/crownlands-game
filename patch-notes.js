@@ -1,8 +1,16 @@
 (function () {
   window.CROWNLANDS_PATCH_NOTES = Object.freeze({
-    buildId: "20260905-server-connection-reliability-v1",
-    generatedAt: "2026-09-05T22:00:00.000Z",
+    buildId: "20260906-contextual-onboarding-v1",
+    generatedAt: "2026-09-06T12:00:00.000Z",
     releases: Object.freeze([
+      Object.freeze({
+        buildId: "20260906-contextual-onboarding-v1",
+        dateKey: "2026-09-06",
+        publishedAt: "2026-09-06T12:00:00.000Z",
+        notes: Object.freeze([
+          "New rulers receive short contextual tips for their first city upgrade, scout, attack, and camp capture. Dismiss tips anytime or replay them from Profile, Settings, First steps & help.",
+        ]),
+      }),
       Object.freeze({
         buildId: "20260905-server-connection-reliability-v1",
         dateKey: "2026-09-05",

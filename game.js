@@ -2495,6 +2495,9 @@ const incomingAttackBtn = document.getElementById("incomingAttackBtn");
 const incomingAttackCount = document.getElementById("incomingAttackCount");
 const incomingAttackTime = document.getElementById("incomingAttackTime");
 const helpBtn = document.getElementById("helpBtn");
+const ONBOARDING_TOPICS = Object.freeze(["upgrade", "scout", "attack", "camp"]);
+let onboardingScope = "";
+let onboardingPrefs = null;
 const crownlandsAudio = window.CrownlandsAudio;
 const crownlandsAnimations = window.CrownlandsAnimations;
 const BATTLE_IMPACT_AUDIO_DELAY_MS = 150;
@@ -16081,6 +16084,7 @@ async function connectOnlineIsland(regionId, {
         verifiedRealmInfo = { ...verifiedRealmInfo, realmShardId: REALM_SHARD_ID };
       }
       if (claim.currentUser) applyOnlineProfileSnapshot(claim.currentUser, state.playerName);
+      if (!claim.alreadyClaimed && claim.cityId) enableOnboardingGuidance({ onlyIfNew: true });
       const claimedRegionId = claim?.islandId ? getRegionIdFromOnlineIslandId(claim.islandId) : "";
       const redirectedRegionId = claimedRegionId && claimedRegionId !== targetRegionId ? claimedRegionId : "";
       const claimedIslandChanged = Boolean(claim?.islandId && claim.islandId !== islandId);
@@ -22738,6 +22742,7 @@ function renderAll() {
 }
 
 function renderHud() {
+  renderOnboardingMapTip();
   setTextIfChanged(lordNameText, state.playerName);
   ensureDailyCaptureTracker();
   state.character = normalizeCharacterProgress(state.character);
@@ -27904,6 +27909,7 @@ function showRewardCampInfoModal(campId) {
       </div>`;
   modalTitle.textContent = camp.name;
   modalBody.innerHTML = `
+    ${renderOnboardingTip("camp", camp)}
     <div class="gold-camp-info-panel">
       <div class="camp-info-tabs" role="tablist" aria-label="${escapeHtml(camp.name)} information">
         <button id="campStatsTab" class="camp-info-tab active" type="button" role="tab" aria-selected="true" aria-controls="campStatsPanel" data-camp-info-tab="stats">${isDeedCamp || isRelicCamp ? "Status" : "Stats"}</button>
@@ -28015,6 +28021,7 @@ function showScoutReportModal(cityId) {
   modal.dataset.scoutReportCityId = cityId;
   modalTitle.textContent = "Detailed scout report";
   modalBody.innerHTML = `
+    ${renderOnboardingTip("scout", city, "report")}
     <div class="detailed-scout-report">
       <div class="scout-report-identities">
         <div class="scout-report-ruler player">
@@ -29037,6 +29044,7 @@ function togglePerformancePanel(force = null) {
 }
 
 function renderPanel() {
+  renderOnboardingMapTip();
   actionButtons.innerHTML = "";
   const source = selectedSourceId ? cityById(selectedSourceId) : null;
 
@@ -29608,6 +29616,7 @@ function showTroopSliderModalWithRoute(source, target, route, options = {}) {
       ${isReinforcement && !campTarget && !isStronghold(target) ? `<div class="reinforcement-limit-note"><strong>${formatNumber(ordinaryCityReinforcementUsage)} / ${formatNumber(ORDINARY_CITY_REINFORCEMENT_CAPACITY)} reinforcement slots</strong><span>Ordinary cities reserve one slot per contributing clanmate when a march launches.</span></div>` : ""}
       ${rallyOrder ? `<div class="reinforcement-limit-note rally-limit-note"><strong>${CLAN_RALLY_MIN_PARTICIPANTS}–${CLAN_RALLY_MAX_PARTICIPANTS} participants</strong><span>${orderKind === "rally_create" ? "You will lead this manual-launch Rally. Launch stays blocked until every participant is Ready." : "Your troops march visibly to the assembly city and must arrive before launch."}</span></div>` : ""}
 
+      ${orderKind === "attack" ? renderOnboardingTip(campTarget ? "camp" : "attack", target, "order") : ""}
       <div class="troop-slider-control">
         <div class="troop-slider-readout">
           <span>Troops to ${rallyOrder ? "commit" : isTransfer || isReinforcement ? "send" : "attack with"}</span>
@@ -31162,6 +31171,7 @@ function showCityInfoModal(cityId) {
       </div>`;
   modalTitle.textContent = `${city.name} - Level ${city.level}`;
   modalBody.innerHTML = `
+    ${renderOnboardingTip("upgrade", city, "info")}
     <div class="city-stat-panel modal-city-stats">
       ${mainCityBlock}
       ${renderCityLevelUpAction(city)}
@@ -37512,66 +37522,173 @@ function getBattleReportSummary(report) {
   return `${formatNumber(report.defendersLeft)} defenders remained.`;
 }
 
+function getOnboardingPrefs() {
+  const scope = getCurrentOnlineUid() ? getOnlineRequestScope() : "";
+  if (scope === onboardingScope) return onboardingPrefs;
+  onboardingScope = scope;
+  onboardingPrefs = null;
+  if (!scope) return null;
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(`crownlands-first-steps-v1:${scope}`));
+    if (raw && typeof raw.enabled === "boolean" && Array.isArray(raw.dismissed)) {
+      onboardingPrefs = { enabled: raw.enabled, dismissed: ONBOARDING_TOPICS.filter(topic => raw.dismissed.includes(topic)) };
+    }
+  } catch (_error) { /* Storage is optional. */ }
+  return onboardingPrefs;
+}
+
+function saveOnboardingPrefs(preferences) {
+  if (!getCurrentOnlineUid()) return false;
+  getOnboardingPrefs();
+  onboardingPrefs = preferences;
+  try {
+    window.localStorage.setItem(`crownlands-first-steps-v1:${onboardingScope}`, JSON.stringify(preferences));
+  } catch (_error) { /* Retain the session preference. */ }
+  return true;
+}
+
+function enableOnboardingGuidance({ onlyIfNew = false } = {}) {
+  if (onlyIfNew && getOnboardingPrefs()) return;
+  saveOnboardingPrefs({ enabled: true, dismissed: [] });
+}
+
+function getOnboardingCopy(topic, target = null, context = "map") {
+  if (topic === "upgrade") {
+    const ownedCity = target?.owner === "player" && !isStronghold(target) ? target : null;
+    const cost = ownedCity ? getLevelCost(getProjectedCityForInstantActions(ownedCity)) : NaN;
+    const action = context === "info" ? "Use +1 below" : "Select your city and tap Level";
+    const detail = ownedCity && cityHasIncomingUpgradeBlocker(ownedCity)
+      ? "An incoming attack blocks upgrades until it resolves."
+      : Number.isFinite(cost) && getProjectedGold() < cost
+        ? `Costs ${formatNumber(cost)} Gold. Let your cities produce more Gold.`
+        : Number.isFinite(cost) ? `Costs ${formatNumber(cost)} Gold.` : "Check the button's Gold cost.";
+    return { title: "Your first city upgrade", text: `${action} to boost Gold and troop production. ${detail}` };
+  }
+  if (topic === "scout") {
+    if (context === "report") return { title: "Read your scout report", text: `Intelligence lasts ${formatNumber(SCOUT_REPORT_SECONDS / 60)} minutes; defenders can change. Compare this snapshot with your attack forecast.` };
+    if (target && (getPendingScoutMission(target.id) || pendingDirectScoutTargets.has(target.id))) {
+      return { title: "Your scout is on its way", text: "Open Reports after arrival. You can explore other maps while the scout travels." };
+    }
+    if (target && getScoutReport(target.id)) return { title: "Your scout report is ready", text: "Open Reports to inspect this snapshot before choosing your army. Defenders may change." };
+    return { title: "Scout before you march", text: "Select a neutral city and tap Scout. One troop travels to it; open Reports after arrival." };
+  }
+  if (topic === "attack") {
+    return context === "order"
+      ? { title: "Your first attack", text: "Choose troops with the slider. Check the forecast and travel time. Tap Attack to send; open Reports after arrival." }
+      : { title: "Plan your first attack", text: "Select a neutral city and tap Attack. Scout to reveal defenders, then choose and confirm your army. Main Cities cannot be attacked." };
+  }
+  if (topic === "camp") {
+    const config = target && isRewardCampTarget(target) ? getRewardCampConfig(target) : null;
+    if (!config) return { title: "Build toward a camp capture", text: "Find Camp badges in the map switcher. Open a camp's Info to check defenders, hold time, and today's rewards before attacking." };
+    const duration = formatDuration(config.holdSeconds);
+    const rewardTab = config.type === "deed" ? "Your Rewards" : "Reward";
+    return target.owner === "player"
+      ? { title: "Keep control until the timer ends", text: `You hold this camp. Defend it until its ${duration} hold ends. Another ruler taking it restarts the timer; check ${rewardTab} for daily limits.` }
+      : { title: "Capture, then hold", text: `Capture starts a ${duration} hold. Scout, defeat the defenders, and keep control until it ends. Check ${rewardTab} for today's allowance.` };
+  }
+  return null;
+}
+
+function renderOnboardingTip(topic, target = null, context = "map") {
+  const preferences = getOnboardingPrefs();
+  if (!preferences?.enabled || preferences.dismissed.includes(topic)) return "";
+  const copy = getOnboardingCopy(topic, target, context);
+  if (!copy) return "";
+  return `<aside class="onboarding-tip" data-onboarding-topic="${topic}" data-onboarding-target="${escapeHtml(target?.id || "")}" data-onboarding-context="${context}" data-onboarding-scope="${escapeHtml(onboardingScope)}" aria-label="First steps guidance">
+    <div class="onboarding-tip-copy"><strong>${escapeHtml(copy.title)}</strong><p>${escapeHtml(copy.text)}</p></div>
+    <div class="onboarding-tip-actions"><button type="button" data-onboarding-dismiss="${topic}" aria-label="Dismiss ${escapeHtml(copy.title)} tip">Got it</button><button type="button" data-onboarding-hide aria-label="Turn off first steps guidance">Hide tips</button></div>
+  </aside>`;
+}
+
+function renderOnboardingMapTip() {
+  refreshOnboardingModalTip();
+  const host = document.getElementById("onboardingMapTip");
+  if (!host) return;
+  const preferences = getOnboardingPrefs();
+  let markup = "";
+  if (state && isOnlineWorldActive() && preferences?.enabled && !sendMode) {
+    const target = selectedTargetId ? getArmyTargetById(selectedTargetId) : null;
+    const source = selectedSourceId ? cityById(selectedSourceId) : null;
+    const available = topic => !preferences.dismissed.includes(topic);
+    let topic = ONBOARDING_TOPICS.find(available);
+    if (target && isRewardCampTarget(target)) topic = "camp";
+    else if (target && target.owner !== "player") topic = available("scout") ? "scout" : "attack";
+    else if (source && !isStronghold(source) && available("upgrade")) topic = "upgrade";
+    markup = topic ? renderOnboardingTip(topic, target || source) : "";
+  }
+  host.hidden = !markup;
+  if (host.dataset.guidanceMarkup !== markup) {
+    host.innerHTML = markup;
+    host.dataset.guidanceMarkup = markup;
+  }
+}
+
+function refreshOnboardingModalTip() {
+  if (!modal?.open) return;
+  const tip = modalBody.querySelector(".onboarding-tip");
+  if (!tip) return;
+  const preferences = getOnboardingPrefs();
+  const topic = tip.dataset.onboardingTopic;
+  if (!preferences?.enabled || preferences.dismissed.includes(topic) || tip.dataset.onboardingScope !== getOnlineRequestScope()) {
+    tip.remove();
+    return;
+  }
+  const target = tip.dataset.onboardingTarget ? getArmyTargetById(tip.dataset.onboardingTarget) : null;
+  const copy = getOnboardingCopy(topic, target, tip.dataset.onboardingContext);
+  if (!copy) return;
+  setTextIfChanged(tip.querySelector("strong"), copy.title);
+  setTextIfChanged(tip.querySelector("p"), copy.text);
+  const dismiss = tip.querySelector("[data-onboarding-dismiss]");
+  const label = `Dismiss ${copy.title} tip`;
+  if (dismiss?.getAttribute("aria-label") !== label) dismiss?.setAttribute("aria-label", label);
+}
+
+function handleOnboardingGuidanceClick(event) {
+  const button = event.target.closest?.("[data-onboarding-dismiss], [data-onboarding-hide], [data-onboarding-enable]");
+  if (!button) return;
+  const card = button.closest("[data-onboarding-scope]");
+  if (!getCurrentOnlineUid() || (card && card.dataset.onboardingScope !== getOnlineRequestScope())) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (button.hasAttribute("data-onboarding-enable")) {
+    enableOnboardingGuidance();
+    modal.close();
+    closeProfileScreen();
+    showToast("Tips are on. Select a city or camp.");
+  } else {
+    const preferences = getOnboardingPrefs();
+    if (!preferences) return;
+    const topic = button.dataset.onboardingDismiss;
+    saveOnboardingPrefs({ enabled: !button.hasAttribute("data-onboarding-hide"), dismissed: ONBOARDING_TOPICS.filter(item => preferences.dismissed.includes(item) || item === topic) });
+    const nextFocus = card?.nextElementSibling?.querySelector("button:not([disabled]), input:not([disabled])") || closeModalBtn;
+    document.querySelectorAll(".onboarding-tip").forEach(tip => {
+      if (button.hasAttribute("data-onboarding-hide") || tip.dataset.onboardingTopic === topic) tip.remove();
+    });
+    if (modal.open) nextFocus?.focus();
+  }
+  const host = document.getElementById("onboardingMapTip");
+  if (host) delete host.dataset.guidanceMarkup;
+  renderOnboardingMapTip();
+  if (!modal.open) (host?.querySelector("button") || logBtn)?.focus();
+}
+
 function showHelpModal() {
-  modalTitle.textContent = "How this prototype works";
+  modal.className = "modal";
+  modalTitle.textContent = "First steps & help";
   modalBody.innerHTML = `
-    <p>This is real-time, not turn-based. Gold, troop growth, player actions, and army travel keep running while the game is active.</p>
-    <ul>
-      <li>Drag empty land to move around the current island map.</li>
-      <li>Use the mouse wheel on PC or pinch on phone to zoom in and out.</li>
-      <li>Tap empty land to deselect your current city.</li>
-      <li>Tap a blue city to select your source.</li>
-      <li>Use the left button to level that exact city one level at a time.</li>
-      <li>Use the center ! button to inspect that city's full stat panel.</li>
-      <li>Use Send Troops, choose 25%, 50%, 80%, or 100%, then tap one destination city to launch immediately.</li>
-      <li>Blue destinations receive transfers. Neutral and player-owned destinations receive attacks.</li>
-      <li>There are no fixed roads. Active army routes appear only after troops are sent.</li>
-      <li>Armies calculate the shortest land route around lakes, mountains, cities, and strongholds, then resolve when they arrive.</li>
-      <li>Normal cities have no level cap. Upgrade cost rises 20% per level, with an extra doubling for each ten-level band above Level 100.</li>
-      <li>The world has ${formatNumber(getRegionIds().length)} maps and ${formatNumber(ISLAND_CITY_COUNT)} total city slots.</li>
-      <li>The center island keeps its middle clear for a future feature.</li>
-      <li>New online players use designated spawn maps. Maps with at least ${formatNumber(MIN_NEW_PLAYER_SPAWN_NEUTRAL_CITIES)} neutral cities are preferred, with any remaining eligible neutral city used as a fallback.</li>
-      <li>Your main city starts with 200 troops. Gray cities start with 10 defending troops.</li>
-      <li>Use Recruit, Level Up, and Skills to grow faster. Leveling increases walls, defense %, troop production, and gold production.</li>
-      <li>Every signed-in player claims one starting city, then expands through neutral captures and player combat.</li>
-    </ul>
-  `;
-  modalBody.innerHTML = `
-    <p>Crownlands is real-time conquest: cities produce troops and gold while armies travel across terrain-aware routes.</p>
-    <ul>
-      <li>You start with one main city, 200 troops, and 100 gold.</li>
-      <li>Neutral expansion has two limits: 30 neutral captures per local day, and neutral captures stop once you own 30 cities.</li>
-      <li>After that, expand by attacking player-owned cities.</li>
-      <li>Send Troops is single-click after setup: pick a march percent, then tap one destination to launch.</li>
-      <li>Scout Nearby costs ${formatNumber(SCOUT_NEARBY_COST)} gold and covers the current map only.</li>
-      <li>Regroup costs ${formatNumber(REGROUP_COST)} gold, previews a larger red radius, then sends all troops from nearby owned cities into the selected city.</li>
-      <li>The top-right fullscreen button expands the game surface and the game disables page text selection while playing.</li>
-      <li>City level creates victory points for combat value, while passive gold follows the Million Lords city production curve.</li>
-      <li>City combat resolves in two phases: attack power damages the city wall first, then only power left after the breach fights the garrison. Capturing requires both breaching the wall and exceeding the garrison defense.</li>
-      <li>Each defending soldier starts at ${formatNumber(BASE_TROOP_DEFENSE_POWER)} defense power. Shieldwall Discipline adds up to ${formatNumber(SKILL_CONFIG.shieldwallDiscipline.maxPercent)}%, while personal and shared clan objective support add against that same base. City level never increases soldier defense.</li>
-      <li>Stoneworks strengthens the holding's one physical wall. Objective support never strengthens walls, and clan reinforcements contribute their own live Shieldwall and objective bonuses without duplicating the destination wall.</li>
-      <li>Each troop starts at ${formatNumber(BASE_TROOP_ATTACK_POWER)} attack power; maximum Swordmastery raises that to ${formatNumber(BASE_TROOP_ATTACK_POWER * 1.6)}. The value is locked when the army launches.</li>
-      <li>Every neutral reward camp starts with 20,000 troops. Camps have no level or walls, and each stationed troop or reinforcement contributes exactly ${REWARD_CAMP_TROOP_POWER.toFixed(2)} defense power without skill or objective bonuses.</li>
-      <li>Regular-city walls grow smoothly from ${formatNumber(getBaseCityWalls(1))} at Level 1 to ${formatNumber(getBaseCityWalls(50))} at Level 50, ${formatNumber(getBaseCityWalls(100))} at Level 100, and ${formatNumber(getBaseCityWalls(150))} at Level 150. Above Level 150, wall strength transitions to a base troop-production replacement ratio that reaches ${formatNumber(CITY_LEVEL_STATS.wallProductionRatioMaximumHours)} hours at Level ${formatNumber(CITY_LEVEL_STATS.wallProductionRatioEndLevel)}. A full breach takes round(${formatNumber(SIEGE_REPAIR_BASE_MINUTES)} + city level × ${formatNumber(SIEGE_REPAIR_MINUTES_PER_LEVEL)}) minutes to repair; meaningful damage of at least ${formatNumber(SIEGE_MEANINGFUL_WALL_DAMAGE_PERCENT)}% adds its exact share of that window.</li>
-      <li>Later meaningful hits preserve elapsed repair progress and add only their own damage time. Combat captures and every player or neutral handoff keep the existing integrity and deadline; a breached wall contributes zero defense until it repairs.</li>
-      <li>When an intact wall holds, defender troop losses are capped at ${formatNumber(SIEGE_INTACT_WALL_DEFENDER_LOSS_CAP_PERCENT)}%. Protected raids never persist wall damage.</li>
-        <li>Troop production is VP x ${formatNumber(CITY_LEVEL_STATS.troopProductionPerVictoryPoint)}, improved by Royal Granaries. Passive gold uses ML city production VP x ${formatNumber(MILLION_LORDS_PASSIVE_GOLD_PER_CITY_VP)}, improved by Tax Stewardship and stronghold bonuses.</li>
-        <li>Troop production bonuses do not compound: Royal Granaries, Stronghold or Citadel benefits, and War Drums each add their listed percentage of raw base city troops.</li>
-        <li>Gold production bonuses do not compound: Tax Stewardship, Stronghold or Citadel benefits, and Royal Tax each add their listed percentage of raw base city gold.</li>
-      <li>Army travel uses route distance plus troop-size bands. Larger armies march slower, scouts move as one troop, and March Orders reduces travel time.</li>
-      <li>Glowing pickups appear toward the center of the current island. The first arrives after ${formatNumber(HARVEST_BONUS_INITIAL_SPAWN_SECONDS / 60)} minutes, then the next arrives ${formatNumber(HARVEST_BONUS_RESPAWN_SECONDS / 60)} minute${HARVEST_BONUS_RESPAWN_SECONDS === 60 ? "" : "s"} after each successful collection, alternating between ${formatNumber(HARVEST_BONUS_GOLD_SECONDS / 60)} minutes of gold production and ${formatNumber(HARVEST_BONUS_TROOP_SECONDS / 60)} minutes of troop production. Daily pickup limits are ${formatNumber(HARVEST_BONUS_DAILY_GOLD_LIMIT)} gold and ${formatNumber(HARVEST_BONUS_DAILY_TROOP_LIMIT)} troop pickups.</li>
-      <li>Daily login rewards follow the current UTC calendar month. Missing a day pauses progress instead of skipping a reward, up to two earned rewards may wait for collection, and unclaimed rewards expire when the next UTC month begins.</li>
-      <li>Swordmastery boosts outgoing attack, Guild Charters reduces city upgrade cost, and Field Medics returns part of battle losses to your main city.</li>
-      <li>Main cities cannot be attacked. Use your main city as a protected home base while expanding from other cities.</li>
-      <li>The Citadel Legion attacks up to 20 random regular non-main cities in the Crown Citadel map at 10:00 AM and 6:30 PM Eastern Time. Targets receive 15 minutes of warning beginning at 9:45 AM and 6:15 PM Eastern. Citadel attacks ignore 100% of city-wall defense without damaging the wall. If the Legion defeats every stationed and reinforcing troop, the city loses five levels; Level 5-or-lower cities become Level 1 neutral cities with 10 troops. Peace Shields do not block these attacks, and defenders receive no XP.</li>
-      <li>Each regular Stronghold has its own Stronghold Legacy tab. It ranks rulers by cumulative time held, adds repeat tenures together, and updates the current holder's timer live. The Crown Citadel uses its separate Reign Ledger.</li>
-      <li>Demo Attacks protect weaker kingdoms: much stronger attackers send fewer effective troops, march slower, earn 0 XP, and defenders earn bonus XP.</li>
-      <li>Shop items have UTC daily purchase limits. Reward Camp items are earned separately through contested objectives.</li>
-    </ul>
+    <section class="onboarding-help">
+      <button type="button" data-onboarding-enable>Show first steps tips</button>
+    </section>
+    <ol class="onboarding-help-steps">
+      ${ONBOARDING_TOPICS.map(topic => {
+        const copy = getOnboardingCopy(topic);
+        return `<li><strong>${escapeHtml(copy.title)}.</strong> ${escapeHtml(copy.text)}</li>`;
+      }).join("")}
+    </ol>
+    <p>Drag to move the map. Scroll or pinch to zoom. Tap empty land to deselect. The realm keeps running.</p>
   `;
   modal.showModal();
 }
-
 async function toggleFullscreen() {
   const fullscreenTarget = document.documentElement;
   try {
@@ -39060,6 +39177,17 @@ if (incomingAttackBtn) incomingAttackBtn.addEventListener("click", showIncomingA
 if (inventoryBtn) inventoryBtn.addEventListener("click", showInventoryModal);
 if (cityListBtn) cityListBtn.addEventListener("click", showCityListModal);
 if (helpBtn) helpBtn.addEventListener("click", showHelpModal);
+document.addEventListener("click", handleOnboardingGuidanceClick);
+window.addEventListener("storage", event => {
+  if (event.key === null || event.key === `crownlands-first-steps-v1:${onboardingScope}`) {
+    onboardingScope = "";
+    onboardingPrefs = null;
+    document.querySelectorAll(".onboarding-tip").forEach(tip => tip.remove());
+    const host = document.getElementById("onboardingMapTip");
+    if (host) delete host.dataset.guidanceMarkup;
+    renderOnboardingMapTip();
+  }
+});
 if (mainCityReturnBtn) mainCityReturnBtn.addEventListener("click", returnToMainCity);
 closeModalBtn.addEventListener("click", () => modal.close());
 document.addEventListener("click", event => {
