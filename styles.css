@@ -14814,8 +14814,23 @@ html.holding-tower-qa .modal::backdrop { background: rgba(2,6,8,.82); backdrop-f
 .onboarding-map-tip .onboarding-tip { margin: 0; box-shadow: 0 3px 12px #0006; }
 .onboarding-map-tip[hidden],
 body:has(dialog[open], .profile-screen.open, .toast.visible, .setup-screen.visible) .onboarding-map-tip { display: none; }
+.onboarding-profile-tip[hidden] { display: none; }
+.profile-screen:has(> .onboarding-profile-tip:not([hidden])) { grid-template-rows: auto auto minmax(0, 1fr); }
+.onboarding-profile-tip { min-width: 0; margin: 0 .7rem; }
+.onboarding-profile-tip .onboarding-tip { margin: 0; }
+.onboarding-profile-tip .onboarding-tip-actions { flex-direction: row; align-items: center; }
+#onboardingArrow { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 10000; pointer-events: none; overflow: hidden; }
+#onboardingArrow path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.onboarding-arrow-outline { stroke: #281c14; stroke-width: 7px; }
+.onboarding-arrow-line { stroke: #ffd979; stroke-width: 3px; }
 @media (max-height: 500px) and (orientation: landscape) {
   .onboarding-tip { gap: 8px; padding: 8px 10px; }
   .onboarding-tip-copy strong { font-size: 13px; }
   .onboarding-tip-copy p { font-size: 12px; }
+  .modal .onboarding-tip-actions { flex-direction: row; align-items: center; }
+  .profile-screen:has(> .onboarding-profile-tip:not([hidden])) .player-flag-editor__preview-panel {
+    grid-template-rows: auto 92px auto auto auto;
+    align-content: start;
+    overflow-y: auto;
+  }
 }

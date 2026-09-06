@@ -102,7 +102,8 @@ const staticCacheBytes = staticCacheUrls.reduce((total, url) => {
 // same bounded steps as the main asset-performance validator, including the
 // confirmed-row feedback and focus-retention client update. The staged wall
 // and production helpers advance the shared allowance by one 16 KiB step.
-assert.ok(staticCacheBytes <= 3648 * 1024, "The service-worker installation cache exceeds 3.56 MiB.");
+// Identity guidance and arrows add under one bounded 8 KiB step.
+assert.ok(staticCacheBytes <= 3656 * 1024, "The service-worker installation cache exceeds 3656 KiB.");
 assert.ok(!staticCacheUrls.some(url => url.includes("audio-manager.js")), "The optional audio controller should be runtime-cached.");
 
 assert.match(gallery, /before-\$\{screen\}-\$\{key\}\.jpg/);

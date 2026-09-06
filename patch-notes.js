@@ -1,14 +1,15 @@
 (function () {
   window.CROWNLANDS_PATCH_NOTES = Object.freeze({
-    buildId: "20260906-contextual-onboarding-v1",
-    generatedAt: "2026-09-06T12:00:00.000Z",
+    buildId: "20260906-onboarding-controls-v2",
+    generatedAt: "2026-09-06T15:00:00.000Z",
     releases: Object.freeze([
       Object.freeze({
-        buildId: "20260906-contextual-onboarding-v1",
+        buildId: "20260906-onboarding-controls-v2",
         dateKey: "2026-09-06",
-        publishedAt: "2026-09-06T12:00:00.000Z",
+        publishedAt: "2026-09-06T15:00:00.000Z",
         notes: Object.freeze([
-          "New rulers receive short contextual tips for their first city upgrade, scout, attack, and camp capture. Dismiss tips anytime or replay them from Profile, Settings, First steps & help.",
+          "New rulers receive short tips for editing their name and flag, upgrading a city, scouting, and planning a city attack. Camp attacks are excluded from beginner guidance.",
+          "Arrows point to the controls for each step, including the Profile portrait, name and flag editors, and city actions. Dismiss tips anytime or replay them from Profile, Settings, First steps & help.",
         ]),
       }),
       Object.freeze({
