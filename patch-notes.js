@@ -1,14 +1,21 @@
 (function () {
   window.CROWNLANDS_PATCH_NOTES = Object.freeze({
-    buildId: "20260905-contextual-onboarding-v1",
-    generatedAt: "2026-09-05T22:00:00.000Z",
+    buildId: "20260906-contextual-onboarding-v1",
+    generatedAt: "2026-09-06T12:00:00.000Z",
     releases: Object.freeze([
       Object.freeze({
-        buildId: "20260905-contextual-onboarding-v1",
+        buildId: "20260906-contextual-onboarding-v1",
+        dateKey: "2026-09-06",
+        publishedAt: "2026-09-06T12:00:00.000Z",
+        notes: Object.freeze([
+          "New rulers receive short contextual tips for their first city upgrade, scout, attack, and camp capture. Dismiss tips anytime or replay them from Profile, Settings, First steps & help.",
+        ]),
+      }),
+      Object.freeze({
+        buildId: "20260905-server-connection-reliability-v1",
         dateKey: "2026-09-05",
         publishedAt: "2026-09-05T12:00:00.000Z",
         notes: Object.freeze([
-          "New rulers receive short contextual tips for their first city upgrade, scout, attack, and camp capture. Dismiss tips anytime or replay them from Profile, Settings, First steps & help.",
           "Travel previews keep working while the troop panel updates and avoid holding up simultaneous city or resource updates.",
           "Scouts and troop orders retain their confirmation when a connection drops, so retrying the same order can recover its result without sending it twice.",
           "Returning to the game retries interrupted report and city refreshes and recovers completed order confirmations independently.",
