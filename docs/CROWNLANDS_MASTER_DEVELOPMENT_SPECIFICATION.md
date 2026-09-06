@@ -1,6 +1,6 @@
 # Crownlands Master Development Specification
 
-**Version:** 1.35
+**Version:** 1.36
 **Effective date:** September 5, 2026
 **Document status:** Authoritative baseline with implementation and release verification
 **Evidence reviewed through:** September 5, 2026
@@ -958,6 +958,13 @@ Implementation and measurement detail: [Responsive gameplay performance review](
 
 Implementation and controlled evidence: [Server response and connection reliability](./SERVER_CONNECTION_RELIABILITY.md). Physical phone checks were excluded from this update by the user; deployment status must still be verified separately.
 
+### Contextual first steps
+
+- New starting-city claims enable short, dismissible guidance for the first city upgrade, scout, attack, and Camp capture. Existing players may enable or replay it through Profile → Settings → First steps & help.
+- Guidance appears beside the relevant map selection or action dialog. It explains the upgrade cost and production benefit, one-troop scouting and Reports, the attack confirmation and arrival result, and Camp capture followed by the configured hold timer and daily reward allowance.
+- Tips are optional reading aids. “Got it” dismisses a topic; it does not claim that an action succeeded. “Hide tips” hides all guidance. These preferences are local to the browser, account, and realm, survive reload where browser storage is available, and never gate or submit gameplay actions.
+- Copy uses existing costs, report lifetime, and Camp configuration. Guidance preserves server authority, balance, hidden intelligence, action blockers, and the compact travel section. Implementation and release verification are recorded in `docs/CONTEXTUAL_NEW_PLAYER_ONBOARDING.md`.
+
 ### Current presentation status
 
 - Broad medieval UI theme and readability corrections: `LIVE — ALL PUBLISHED CHANNELS`.
@@ -1303,6 +1310,11 @@ These remain `PROPOSED` or roadmap-level `PLANNED` directions. Their detailed me
 | Crownlands Work conversations and Codex completion reports | Design and implementation history | Decisions used only when confirmed; reports do not prove deployment |
 
 # Appendix D — Change Log
+
+## v1.36 — September 5, 2026
+
+- Confirmed short, optional contextual guidance for a player's first upgrade, scout, attack, and Camp capture.
+- Added dismissal and replay through First steps & help, with browser-local account/realm isolation and configuration-backed copy. Tips do not submit or gate gameplay actions.
 
 ## v1.35 — September 5, 2026
 

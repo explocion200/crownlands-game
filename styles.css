@@ -14774,3 +14774,54 @@ html.holding-tower-qa .modal::backdrop { background: rgba(2,6,8,.82); backdrop-f
   .clan-treasury-panel { padding: .5rem; }
   .clan-treasury-ledger { margin: .35rem 0; }
 }
+
+/* Contextual first steps use the established parchment palette and font. */
+.onboarding-tip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  border: 1px solid var(--cl-muted-brass);
+  border-radius: 6px;
+  color: var(--cl-ink);
+  background: var(--cl-parchment);
+  font-family: inherit;
+  text-align: left;
+}
+.onboarding-tip-copy { flex: 1; min-width: 0; }
+.onboarding-tip-copy strong { display: block; font-size: 14px; }
+.onboarding-tip-copy p { margin: 4px 0 0; font-size: 13px; line-height: 1.35; }
+.onboarding-tip-actions { display: flex; flex-direction: column; flex-shrink: 0; gap: 2px; }
+.onboarding-tip-actions button,
+.onboarding-help button,
+#helpBtn {
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid var(--cl-timber);
+  border-radius: 4px;
+  background: var(--cl-ivory);
+  color: var(--cl-ink);
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.onboarding-tip-actions button { font-size: 12px; }
+.onboarding-tip-actions [data-onboarding-hide] { border-color: transparent; background: transparent; }
+.onboarding-tip button:focus-visible,
+.onboarding-help button:focus-visible,
+#helpBtn:focus-visible { outline: 2px solid var(--cl-burgundy); outline-offset: 2px; }
+.onboarding-map-tip { position: absolute; z-index: 45; right: 84px; top: 10px; width: min(490px, calc(100% - 420px)); }
+.onboarding-map-tip .onboarding-tip { margin: 0; box-shadow: 0 3px 12px #0006; }
+.onboarding-map-tip[hidden],
+body:has(dialog[open]) .onboarding-map-tip,
+body:has(.profile-screen.open) .onboarding-map-tip,
+body:has(.toast.visible) .onboarding-map-tip,
+body:has(.setup-screen.visible) .onboarding-map-tip { display: none; }
+.onboarding-help { margin-bottom: 16px; }
+.onboarding-help small { display: block; margin-top: 8px; }
+@media (max-height: 500px) and (orientation: landscape) {
+  .onboarding-tip { gap: 8px; padding: 8px 10px; }
+  .onboarding-tip-copy strong { font-size: 13px; }
+  .onboarding-tip-copy p { font-size: 12px; }
+}
